@@ -15,3 +15,10 @@ import sys
 import os
 import re
 from calendar_setup import calendar_setup
+
+def get_sig():
+    file = open("sig.txt", "r")
+    lines = file.readlines()
+    rand_index = randint(0, len(lines) - 1)
+    file.close()
+    return "\n\n" + lines[rand_index] + "Mike"
