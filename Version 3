@@ -16,9 +16,16 @@ import os
 import re
 from calendar_setup import calendar_setup
 
+
 def get_sig():
-    file = open("sig.txt", "r")
+    try:
+        file = open("sig.txt", "r")
+    except IOError:
+        print("SIGNATURE FILE NOT OPENED")
+        #default signature if file opens
+        return "\n\nWith Respect,\nMike"
     lines = file.readlines()
-    rand_index = randint(0, len(lines) - 1)
     file.close()
+    #rand_index chooses the signature, used in the return.
+    rand_index = randint(0, len(lines) - 1)
     return "\n\n" + lines[rand_index] + "Mike"
