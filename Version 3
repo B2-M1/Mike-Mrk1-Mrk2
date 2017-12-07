@@ -4,9 +4,11 @@ from email.mime.text import MIMEText
 from datetime import datetime
 from pytodoist import todoist
 from random import randint
+from enum import Enum
 import calendar
 import smtplib
 import imaplib
+import atexit
 import email
 import math
 import time
@@ -16,6 +18,50 @@ import os
 import re
 from calendar_setup import calendar_setup
 
+def add_todo(todo):
+    print("Adding Item to Todo List")
+
+    user = todoist.login("conrad.selig@mines.sdsmt.edu", "adGjl9@$&")
+    projects = user.get_projects()
+    inbox = user.get_project("Inbox")
+    task = inbox.add_task(content=todo, priority=todoist.Priority.LOW)
+
+    print("Item Added")
+    return
+
+def setup_calendar_events():
+
+    events_file = calendar_setup.main()
+
+    for i in range(len(events_file)):
+        events_file[i] = events_file[i].split("&&")
+        events_file[i][-1] = events_file[i][-1].rstrip()
+        events_file[i][0] = events_file[i][0].split("-")
+        events_file[i][0][0], events_file[i][0][1], events_file[i][0][2] = events_file[i][0][1], events_file[i][0][2], events_file[i][0][0]
+
+    return events_file
+
+def get_day_events(events, date):
+
+    days_events = ""
+    events_list = []
+
+    for i in ["-","/","."]:
+        if i in date:
+            date = date.split(i)
+
+    date[1] = date[1].zfill(2)
+    year_check = re.search("([0-9]{2})[0-9]{2}", date[2])
+    if year_check == None:
+        date[2] = "20" + date[2]
+
+    print("Split Date: " + str(date))
+
+    for i in range(len(events)):
+        if date == events[i][0]:
+            events_list.append(events[i])
+
+    return events_list
 
 def get_sig():
     try:
@@ -29,3 +75,673 @@ def get_sig():
     #rand_index chooses the signature, used in the return.
     rand_index = randint(0, len(lines) - 1)
     return "\n\n" + lines[rand_index] + "Mike"
+
+def get_header(name):
+    special_cases = [["Laine", "male"]]
+
+    d = gender.Detector()
+    this_gender = d.get_gender(name[0].title()).lower()
+
+    for i in range(len(special_cases)):
+        if name[0] == special_cases[i][0]:
+            this_gender = special_cases[i][1]
+            break
+
+    if "female" in this_gender:
+        return "Dear Ms. " + name[0].title() + ",\n\n"
+    elif "male" in this_gender:
+        return "Dear Mr. " + name[1].title() + ",\n\n"
+    else:
+        return "Dear " + name[0] + " " + name[1] + ",\n\n"
+
+def generate_key(name):
+    fi = name[0][0]
+    bi = name[1][0]
+    if name[0] == "Conrad" and name[1] == "Selig":
+        base_key = "ADMIN"
+    else:
+        base_key = fi.upper() + bi.upper()
+    gen_key = str(randint(1000000, 9999999))
+    new_key = base_key + gen_key
+    for filename in os.listdir(os.getcwd()):
+        if not "." in filename:
+            if new_key == filename:
+                print("DUPLICATE KEY")
+                print(filename)
+                print("Generating new key...")
+                new_key = generate_key(" ".join(name))
+                print(new_key)
+                return new_key
+    return new_key
+
+def check_key(key):
+    excists = False #a = no key, b = key found, c = key format detected
+
+    if key == "":
+        print("Key in keys? : False")
+        return False
+
+    file = open("keys.txt","r")
+
+    data = file.read()
+
+    if key in data:
+        excists = True
+
+    print("Key in keys? : " + str(excists))
+
+    return excists
+
+def record_key(key):
+    file = open("keys.txt","a", buffering=1)
+    file.write(key + "\n")
+    file.close()
+    return
+
+def record_message(last_message, key):
+    addr = last_message[0]
+    name = " ".join(last_message[1])
+    subject = last_message[2]
+    file = open("records.txt", "a", buffering=1)
+
+    if key != "":
+        file.write(name + "  (" + addr + ")  at: " + str(
+            datetime.now().strftime('%m-%d-%Y %H:%M:%S')) + ". Subject: " + str(subject) + "   \/\/\/ Key = " + str(key) + "\n\n")
+    else:
+        file.write(name + "  (" + addr + ")  at: " + str(
+            datetime.now().strftime('%m-%d-%Y %H:%M:%S')) + ". Subject: " + str(subject) + "   /\/\/\ Message = " + last_message[3] + "\n\n")
+
+    file.close()
+    print("Record Saved")
+
+    return
+
+def save_message_file(reply_data, body):
+    file = open("../Messages/" + reply_data[4] + ".txt", "w", buffering=1)
+    data = ""
+
+    data += "Message From: " + str(reply_data[1]) + "    (" + str(reply_data[0]) + ")"
+    data += "\nMessage Sent At: " + str(datetime.now().strftime('%m-%d-%Y %H:%M:%S'))
+    data += "\nSubject:   '" + str(reply_data[2]) + "'"
+    data += "\nMessage ->\n\n\n"
+    data += body
+    data += "\n\n[End message]"
+
+    file.write(data)
+
+    file.close()
+
+    print("Message File Saved.")
+
+    return
+
+#addr 0, name 1, subject 2, body 3, new_key 4, attach_key 5, header 6, sig 7
+def sender(reply_data): #toaddr, name, subject, in_body, filename
+    print("\nSending Reply...")
+    fromaddr = "mike.adam.simon@gmail.com"
+    #mrmrs = get_mrmrs(name[0])
+
+    #print("Gender test: " + name[0] + " --> " + mrmrs)
+
+    msg = MIMEMultipart()
+
+    msg['From'] = fromaddr
+    msg['To'] = reply_data[0]
+    msg['Subject'] = reply_data[2]
+
+    body = reply_data[6] + reply_data[3] + reply_data[7]
+
+    msg.attach(MIMEText(body, 'plain'))
+
+    if reply_data[5] != "":
+
+        filename = "../Messages/" + str(reply_data[5].rstrip()) + ".txt"
+        f = open(filename)
+        attachment = MIMEText(f.read())
+        attachment.add_header('Content-Disposition', 'attachment', filename=filename)
+        msg.attach(attachment)
+
+        '''
+        print("ATTACHING THIS KEY:    " + str(reply_data[5].rstrip()))
+        attachment = open("../Messages/" + str(reply_data[5].rstrip()) + ".txt", "rb")
+
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload((attachment).read())
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', "attachment; filename= %s" % str(reply_data[5].rstrip()))
+
+        msg.attach(part)
+        '''
+
+    server = smtplib.SMTP('smtp.gmail.com', 587)
+    server.starttls()
+    server.login(fromaddr, "8R.wreyK_+t?AL9z")
+    text = msg.as_string()
+    server.sendmail(fromaddr, reply_data[0], text)
+    server.quit()
+
+    print("Reply Sent")
+
+def receiver():
+    received = [] #addr, name, subject, body
+
+    try:
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login("mike.adam.simon@gmail.com", "8R.wreyK_+t?AL9z")
+        mail.list()
+
+        mail.select("inbox")
+
+        result, data = mail.uid('search', None, "ALL")  # search and return uids instead
+
+        latest_email_uid = data[0].split()[-1]
+
+        result, data = mail.uid('fetch', latest_email_uid, '(RFC822)')  # RFC822 is id for mail body
+
+        raw_email = data[0][1]
+
+        email_message = email.message_from_bytes(raw_email)
+
+        received.append(email.utils.parseaddr(email_message["From"])[1])
+        received.append(email.utils.parseaddr(email_message["From"])[0].split(" "))
+        received.append(str(email.header.decode_header(email_message['Subject'])[0])[2:-8])
+
+        if email_message.is_multipart():
+            for part in email_message.walk():
+                ctype = part.get_content_type()
+                cdispo = str(part.get('Content-Disposition'))
+
+                # skip any text/plain (txt) attachments
+                if ctype == 'text/plain' and 'attachment' not in cdispo:
+                    received.append(part.get_payload(decode=True))  # decode
+                    break
+        # not multipart - i.e. plain text, no attachments, keeping fingers crossed
+        else:
+            received.append(email_message.get_payload(decode=True))
+
+        return received
+
+    except KeyboardInterrupt:
+        print("Keyboard Interrupt, program ending")
+        exit()
+
+def logic(operation, body, reply_data, active_user_index): #operation = char
+
+    if operation == "a":
+        file = open("keys.txt","r")
+        data = file.readlines()
+
+        for i in range(len(data)):
+            if data[i].rstrip() in body:
+                return data[i]
+
+        file.close()
+        return ""
+
+
+    elif operation == "b":
+
+        body = body.lower()
+
+        key_match = re.compile(".*?[A-Z]{2}[0-9]{7}")
+
+        reply_body = ""
+
+        if "save" in body:
+
+            print("'Save' Keyword Detected")
+            reply_body += "I've saved your message under the key " + str(reply_data[4]) + "\nSend me this key back and any time to retrieve your file."
+
+        if any(x in body for x in ["time slot","timeslot","schedule"]):
+
+            print("'Schedule' Keyword Detected")
+
+            day_of_week = "Monday"
+            json_week = json.loads('{"Weekdays": ["Monday","Tuesday","Wednesday","Thursday","Friday"], "Weekends": ["Saturday","Sunday"]}')
+            json_working_hours = json.loads('{"MWF": [8,6], "TTH": [9,6], "SSU": [10,6]}')
+            timeslots = []
+
+            events = setup_calendar_events()
+            usr_date = re.search("([0-9]?[0-9][-/.][0-9]?[0-9][-./][0-9]{2,4})", body.replace(" ",""))
+            if usr_date != None:
+                print("Possible Date Found: " + usr_date.group(1))
+                days_events = get_day_events(events,usr_date.group(1))
+                for i in ["-", "/", "."]:
+                    if i in usr_date.group(1):
+                        day_of_week = usr_date.group(1).split(i)
+
+                day_of_week[0], day_of_week[1], day_of_week[2] = day_of_week[2], day_of_week[0], day_of_week[1]
+
+                day_of_week[1] = day_of_week[1].zfill(2)
+                year_check = re.search("([0-9]{2})[0-9]{2}", day_of_week[0])
+                if year_check == None:
+                    day_of_week[0] = "20" + day_of_week[0]
+
+                for i in range(len(day_of_week)):
+                    day_of_week[i] = int(day_of_week[i])
+
+                #day_of_week = "-".join(day_of_week)
+                day_of_week_datetime = datetime(int(day_of_week[0]),int(day_of_week[1]),int(day_of_week[2]))
+                day_of_week = calendar.day_name[calendar.weekday(day_of_week[0],day_of_week[1],day_of_week[2])]
+                print("Detected Day of Week: " + day_of_week)
+
+                if str(day_of_week_datetime).split()[0] < str(datetime.now()).split()[0]:
+
+                    reply_body += "I'm sorry, but you cannot schedule an event in the past!"
+
+                elif days_events == None or days_events == []:
+                    for i in json_week["Weekdays"]:
+                        if day_of_week == i:
+                            #Weekday
+                            reply_body += "Conrad has no events scheduled on " + usr_date.group(1).replace(" ", "") + ".  (" + day_of_week + ")\n"
+                            if any(x in day_of_week for x in ["Monday","Wednesday","Friday"]):
+                                reply_body += "Let me know what time between " + str(json_working_hours["MWF"][0]) + "am and " + str(json_working_hours["MWF"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
+                                reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
+                            else:
+                                reply_body += "Let me know what time between " + str(json_working_hours["TTH"][0]) + "am and " + str(json_working_hours["TTH"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
+                                reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
+                            break
+                    else:
+                        #Weekend
+                        reply_body += "Conrad has no events scheduled on " + usr_date.group(1).replace(" ","") + ".  (" + day_of_week + ")\n"
+                        reply_body += "Let me know what time between " + str(json_working_hours["SSU"][0]) +  "am and " + str(json_working_hours["SSU"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
+                        reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
+
+                else:
+
+                    start_end_times = [[]] #[[start,end],[start,end]]
+
+                    for i in range(len(days_events)):
+                        start_end_times.append([days_events[i][1], days_events[i][2]])
+                        if int(start_end_times[-1][1][3:]) >= 50 and int(start_end_times[-1][1][3:]) != 0:
+                            start_end_times[-1][1] = int(start_end_times[-1][1].replace(":",""))
+                            start_end_times[-1][1] = int(math.ceil(start_end_times[-1][1] / 100.0)) * 100
+                            start_end_times[-1][1] = str(start_end_times[-1][1]).zfill(4)
+                            start_end_times[-1][1] = start_end_times[-1][1][:2] + ":" + start_end_times[-1][1][2:]
+
+                    start_end_times.append([])
+
+                    open_slots = []
+                    increments = []
+
+                    for i in json_week["Weekdays"]:
+                        if day_of_week == i:
+                            #Weekday
+                            if any(x in day_of_week for x in ["Monday","Wednesday","Friday"]):
+                                start_end_times[0], start_end_times[-1] = ["",str(json_working_hours["MWF"][0]).zfill(2) + ":00"], [str(json_working_hours["MWF"][1] + 12).zfill(2) + ":00",""]
+
+                                for b in range(len(start_end_times) - 1):
+                                    if start_end_times[b][1] != start_end_times[b + 1][0]:
+                                        open_slots.append([start_end_times[b][1], start_end_times[b+1][0]])
+
+                                if len(open_slots) != 0:
+
+                                    reply_body += "Here are Conrad's open time slots, please select which one(s) you would like, and what your event is called.\n"
+                                    reply_body += "Example: 'slots 1,2,3,and 4 for an executive meeting.'\n\n"
+
+                                    for b in range(len(open_slots)):
+                                        inc_temp = []
+                                        next_start = int(open_slots[b][0].replace(":",""))
+                                        next_end = int(open_slots[b][1].replace(":",""))
+                                        if next_start != next_end - 100:
+                                            inc_temp.append(next_start)
+                                            for c in range(int((next_end - next_start) / 100)):
+                                                inc_temp.append(next_start + ((c + 1) * 100))
+                                            for c in range(len(inc_temp) - 1):
+                                                increments.append([inc_temp[c],inc_temp[c+1]])
+                                        else:
+                                            increments.append([next_start, next_end])
+
+                                    for b in range(len(increments)):
+                                        increments[b][0], increments[b][1] = str(increments[b][0]).zfill(4), str(increments[b][1]).zfill(4)
+                                        increments[b][0], increments[b][1] = increments[b][0][:2] + ":" + increments[b][0][2:], increments[b][1][:2] + ":" + increments[b][1][2:]
+                                        reply_body += "Time slot " + str(b + 1) + ": " + increments[b][0] + " to " + increments[b][1] + ".\n"
+
+                                        timeslots.append([str(b + 1), increments[b][0], increments[b][1]])
+
+                                else:
+                                    reply_body += "I'm sorry, Conrad does not have any open time slots for " + usr_date.group(1) + "."
+
+                            else:
+
+                                start_end_times[0], start_end_times[-1] = ["", str(json_working_hours["TTH"][0]).zfill(2) + ":00"], [str(json_working_hours["TTH"][1] + 12).zfill(2) + ":00", ""]
+
+                                for b in range(len(start_end_times) - 1):
+                                    if start_end_times[b][1] != start_end_times[b + 1][0]:
+                                        open_slots.append([start_end_times[b][1], start_end_times[b + 1][0]])
+
+                                if len(open_slots) != 0:
+
+                                    reply_body += "Here are Conrad's open time slots, please select which one(s) you would like, and what your event is called.\n"
+                                    reply_body += "Example: 'slots 1,2,3,and 4 for an executive meeting.'\n\n"
+
+                                    for b in range(len(open_slots)):
+                                        inc_temp = []
+                                        next_start = int(open_slots[b][0].replace(":",""))
+                                        next_end = int(open_slots[b][1].replace(":",""))
+                                        if next_start != next_end - 100:
+                                            inc_temp.append(next_start)
+                                            for c in range(int((next_end - next_start) / 100)):
+                                                inc_temp.append(next_start + ((c + 1) * 100))
+                                            for c in range(len(inc_temp) - 1):
+                                                increments.append([inc_temp[c],inc_temp[c+1]])
+                                        else:
+                                            increments.append([next_start, next_end])
+
+                                    for b in range(len(increments)):
+                                        increments[b][0], increments[b][1] = str(increments[b][0]).zfill(4), str(increments[b][1]).zfill(4)
+                                        increments[b][0], increments[b][1] = increments[b][0][:2] + ":" + increments[b][0][2:], increments[b][1][:2] + ":" + increments[b][1][2:]
+                                        reply_body += "Time slot " + str(b + 1) + ": " + increments[b][0] + " to " + increments[b][1] + ".\n"
+
+                                        timeslots.append([str(b + 1), increments[b][0], increments[b][1]])
+
+                                else:
+                                    reply_body += "I'm sorry, Conrad does not have any open time slots for " + usr_date.group(1) + "."
+
+                            break
+                    else:
+                        #Weekend
+                        start_end_times[0], start_end_times[-1] = ["", str(json_working_hours["SSU"][0]).zfill(2) + ":00"], [str(json_working_hours["SSU"][1] + 12).zfill(2) + ":00", ""]
+
+                        for i in range(len(start_end_times) - 1):
+                            if start_end_times[i][1] != start_end_times[i + 1][0]:
+                                open_slots.append([start_end_times[i][1], start_end_times[i + 1][0]])\
+
+                        if len(open_slots) != 0:
+
+                            reply_body += "Here are Conrad's open time slots, please select which one(s) you would like, and what your event is called.\n"
+                            reply_body += "Example: 'slots 1,2,3,and 4 for an executive meeting.'\n\n"
+
+                            for b in range(len(open_slots)):
+                                inc_temp = []
+                                next_start = int(open_slots[b][0].replace(":", ""))
+                                next_end = int(open_slots[b][1].replace(":", ""))
+                                if next_start != next_end - 100:
+                                    inc_temp.append(next_start)
+                                    for c in range(int((next_end - next_start) / 100)):
+                                        inc_temp.append(next_start + ((c + 1) * 100))
+                                    for c in range(len(inc_temp) - 1):
+                                        increments.append([inc_temp[c], inc_temp[c + 1]])
+                                else:
+                                    increments.append([next_start, next_end])
+
+                            for b in range(len(increments)):
+                                increments[b][0], increments[b][1] = str(increments[b][0]).zfill(4), str(
+                                    increments[b][1]).zfill(4)
+                                increments[b][0], increments[b][1] = increments[b][0][:2] + ":" + increments[b][0][2:], \
+                                                                     increments[b][1][:2] + ":" + increments[b][1][2:]
+                                reply_body += "Time slot " + str(b + 1) + ": " + increments[b][0] + " to " + increments[b][1] + ".\n"
+
+                                timeslots.append([str(b+1), increments[b][0], increments[b][1]])
+
+                        else:
+                            reply_body += "I'm sorry, Conrad does not have any open time slots for " + usr_date.group(1) + "."
+            else:
+
+                reply_body += "I can see that your trying to schedule an event, but I cant tell what date your trying to inquire about!\n\nSorry!"
+
+
+            users_list[active_user_index].change_stage(stages.Pick_Timeslot)
+            users_list[active_user_index].set_timeslots(timeslots)
+
+        if any(x in body for x in ["calendar","calender"]):
+
+            print("'Calendar' Keyword Detected")
+            events = setup_calendar_events()
+            date = re.search("([0-9]?[0-9][-/.][0-9]?[0-9][-./][0-9]{2,4})", body.replace(" ",""))
+            if date != None:
+                print("Possible Date Found: " + date.group(1))
+                days_events = get_day_events(events,date.group(1))
+                if days_events == None or days_events == "":
+                    reply_body += "I did not find any events for " + date.group(1).replace(" ","") + ",\nSorry!"
+                else:
+                    reply_body += "Here all of of the calender events for " + date.group(1).replace(" ","") + "\n"
+                    reply_body += days_events
+                #days_events = get_day_events(events,date.group(1))
+            else:
+                events_str = ""
+                for i in range(len(events)):
+                    events[i][0] = "-".join(events[i][0])
+                    events[i] = "  :  ".join(events[i])
+                events_str = "\n".join(events)
+
+                reply_body += "I can see you want Conrad's calendar, but I didnt find a specific date. Here are all his events if you would like to look through them yourself.\n\n"
+                reply_body += events_str
+
+        try:
+
+            if "remind me to" in body:
+                if reply_data[0] == "conrad.selig@mines.sdsmt.edu":
+                    match = re.search("remind me to (.+?)[.,?!]", body)
+                    add_todo(match.group(1))
+
+                    reply_body += "I've added '" + str(match.group(1)) + "' to your todo list.\n"
+                else:
+                    reply_body += "I can see that you're trying to add items to Conrad's todo list, but I'm afraid you don't have the clearance level for that.\n"
+
+            if any(x in body for x in ["todo", "to do"]):
+                if reply_data[0] == "conrad.selig@mines.sdsmt.edu":
+                    match = re.search("add \"?(.+?)\"? to my", body)
+                    add_todo(match.group(1))
+
+                    reply_body += "I've added '" + match.group(1) + "' to your todo list.\n"
+                else:
+                    reply_body += "I can see that you're trying to add items to Conrad's todo list, but I'm afraid you don't have the clearance level for that.\n"
+
+        except AttributeError:
+            print("error")
+
+        if check_key(str(reply_data[5])):
+
+            if reply_body == "":
+                reply_body += "I've attached the file you requested."
+            else:
+                reply_body += "I've also attached the file you requested."
+
+        if key_match.match(body) and not check_key(str(reply_data[5])):
+
+            reply_body += "hmmmm, I can tell you tried to attach a key (or something that looks like one), but I dont have that key on file!\nPlease double check to make sure you got your key correct."
+
+        if reply_body == "":
+
+            print("No Keywords Detected")
+            reply_body = "I'm sorry to report that I'm not sure what your asking! Perhaps if you use on the of the following keywords I will be more likely to understand what you want me to do.\n\n'Save'   -I'll save your message under a key, you can access it whenever simply by sending the key back.\n'Schedule'   -Schedule an event with Conrad Selig, please include a date.\n\tFor example: 'Please schedule an event on " + str(datetime.now()).split()[0][5:] + "-" + str(datetime.now()).split()[0][:4] + "'\n\nSorry for the inconvenience!"
+
+        return reply_body
+
+def main():
+    test_count = 1
+    TIME = 15
+    #last_message = addr 0, name 1, subject 2, body 3
+    reply_data = [] #addr 0, name 1, subject 2, body 3, new_key 4, attach_key 5, header 6
+    clines = []
+    global users_list
+    users_list = []
+
+    print("Retrieving last data... ")
+    last_message = receiver()
+    last_message[3] = bytes.decode(last_message[3], "utf-8")
+    print("Initial Data Recieved: " + str(last_message))
+
+    print("Getting User Records...")
+    file = open("users.txt","r")
+    data = file.readlines()
+    file.close()
+    print("\t", len(data), "users found")
+    for i in range(len(data)):
+        data[i] = data[i].split(":")
+        data[i][1] = data[i][1].split(",")
+        print("\t\t" + data[i][1][0] + " " + data[i][1][1])
+        users_list.append(usrs(data[i][0],data[i][1],stages(int(data[i][2])),[data[i][3].split("-") for x in data[i][3].split("+")]))
+
+    #print(users_list[0].get_timeslots())
+
+    try:
+
+        while True:
+            print()
+            # Timer
+            for i in range(TIME):
+                if i == 0 or i == TIME - 1:
+                    print(",", end="")
+                else:
+                    print(" ", end="")
+            print()
+            for i in range(TIME):
+                print("#", end="")
+                sys.stdout.flush()
+                time.sleep(1)
+            print("\n\n")
+            # end timer
+
+            new_message = receiver()
+            new_message[3] = bytes.decode(new_message[3], "utf-8")
+            if last_message != new_message:
+
+                # Removing reply data
+                reply = False
+                old_body = new_message[3]
+                print(new_message[3].split("\n"))
+                lines = new_message[3].split("\n")
+                for i in range(len(lines)):
+                    if re.match(">.*", lines[i]):
+                        reply = True
+                    else:
+                        clines.append(lines[i])
+
+                if reply:
+                    double_del = 0
+                    for i in range(len(clines)):
+                        if double_del < 1 and clines[-1] != "\r":
+                            del clines[-1]
+                        elif double_del <= 1:
+                            del clines[-1]
+                            double_del += 1
+
+                if new_message[0] in clines[-1] or "mike.adam.simon@gmail.com" in clines[-1]:
+                    del clines[-2:]
+
+                new_message[3] = "\n".join(clines)
+                # end reply removing
+
+                last_message = new_message
+
+                last_message = new_message
+                print("Cut body: " + last_message[3])
+                reply_data.extend(last_message[:3])
+                reply_data.append("")
+                print("--- New Message Recieved From", last_message[1][0], "---\n\n")
+                for i in range(len(users_list)):
+                    if last_message[0] == users_list[i].get_addr():
+                        print("User Found")
+                        break
+                else:
+                    print("New User Detected: Creating Account")
+                    users_list.append(usrs(last_message[0],last_message[1], stages.Initial, []))
+
+                for i in range(len(users_list)):
+                    if users_list[i].get_name()[0] == reply_data[1][0] and users_list[i].get_name()[1] == reply_data[1][1]:
+                        active_user_index = i
+
+                # If message longer than 80 chars or does not have a key - give key
+                if len(last_message[3]) >= 80 or logic("a", last_message[3], reply_data, active_user_index) == "":
+
+                    reply_data.append(generate_key(last_message[1]))
+
+                    if logic("a", last_message[3], reply_data, active_user_index) != "":
+                        reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
+                    else:
+                        reply_data.append("")
+
+                    record_key(reply_data[-2])
+                    print("Generating Key: ", reply_data[-2])
+
+                # Else do not generate key, see if key exists and add attachment
+                else:
+
+                    reply_data.append("")
+                    if logic("a", last_message[3], reply_data, active_user_index) != "":
+                        reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
+                    else:
+                        reply_data.append("")
+
+
+                if users_list[active_user_index].get_stage() == stages.Initial:
+
+                    reply_data[3] = logic("b", last_message[3], reply_data, active_user_index)
+
+                elif user_list[active_user_index].get_stage() == stages.Pick_Timeslot:
+
+                    reply_data[3] = logic("c", last_message[3], reply_data, active_user_index)
+
+                record_message(last_message, reply_data[-2])
+                save_message_file(reply_data, last_message[3])
+                reply_data.append(get_header(last_message[1]))
+                reply_data.append(get_sig())
+
+                print("All Data Accumulated... Preparing Reply: " + str(reply_data))
+                sender(reply_data)
+                last_message[3] = old_body
+                old_body = ""
+                clines.clear()
+
+            else:
+                print("--No New Messages--                                 ", test_count)
+                test_count += 1
+
+            reply_data = []
+
+
+    except KeyboardInterrupt:
+        print("\n\nKeyboard Interrupt")
+        exit()
+
+
+
+@atexit.register
+def save_usrs():
+    print("\n\nProgram Ending, Saving Users")
+    file = open("users.txt","w")
+    for i in users_list:
+        timeslots = ["-".join(x) for x in i.get_timeslots()]
+        timeslots = "+".join(timeslots)
+        file.write(i.get_addr() + ":" + str(i.get_name()[0]) + "," + str(i.get_name()[1]) + ":" + str(i.get_stage().value) + ":" + timeslots + "\n")
+    file.close()
+
+class stages(Enum):
+    Initial = 0
+    Pick_Timeslot = 1
+
+class usrs:
+    name = []
+    addr = ""
+    stage = stages
+    timeslots = []
+
+    def __init__(self,in_addr,in_name,in_stage,in_timeslots):
+        self.stage = stages.Initial
+        self.name = in_name
+        self.addr = in_addr
+        self.stage = in_stage
+        self.timeslots = in_timeslots
+
+    def get_name(self):
+        return self.name
+
+    def get_addr(self):
+        return self.addr
+
+    def get_stage(self):
+        return self.stage
+
+    def change_stage(self,new_stage):
+        self.stage = new_stage
+
+    def set_timeslots(self, in_slots):
+        self.timeslots = in_slots
+
+    def get_timeslots(self):
+        return self.timeslots
+
+if __name__ == "__main__":
+    main()
