@@ -17,6 +17,7 @@ import sys
 import os
 import re
 from calendar_setup import calendar_setup
+import add_c_event
 
 def add_todo(todo):
     print("Adding Item to Todo List")
@@ -28,6 +29,13 @@ def add_todo(todo):
 
     print("Item Added")
     return
+
+def add_calendar_event(name, start, end):
+    try:
+        add_c_event.setup_event(name,start,end)
+        print("Sucessfully added event '" + name + "' to calendar.")
+    except Exception:
+        print("Error with adding event '" + name + "' to calendar.")
 
 def setup_calendar_events():
 
@@ -550,6 +558,7 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
         return reply_body
 
 def main():
+
     test_count = 1
     TIME = 15
     #last_message = addr 0, name 1, subject 2, body 3
@@ -701,12 +710,15 @@ def main():
 @atexit.register
 def save_usrs():
     print("\n\nProgram Ending, Saving Users")
-    file = open("users.txt","w")
-    for i in users_list:
-        timeslots = ["-".join(x) for x in i.get_timeslots()]
-        timeslots = "+".join(timeslots)
-        file.write(i.get_addr() + ":" + str(i.get_name()[0]) + "," + str(i.get_name()[1]) + ":" + str(i.get_stage().value) + ":" + timeslots + "\n")
-    file.close()
+    try:
+        file = open("users.txt","w")
+        for i in users_list:
+            timeslots = ["-".join(x) for x in i.get_timeslots()]
+            timeslots = "+".join(timeslots)
+            file.write(i.get_addr() + ":" + str(i.get_name()[0]) + "," + str(i.get_name()[1]) + ":" + str(i.get_stage().value) + ":" + timeslots + "\n")
+        file.close()
+    except Exception:
+        print("Error with saving users... Leaving file unchanged")
 
 class stages(Enum):
     Initial = 0
