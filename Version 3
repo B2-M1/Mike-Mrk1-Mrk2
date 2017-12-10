@@ -8,6 +8,7 @@ from enum import Enum
 import calendar
 import smtplib
 import imaplib
+import string
 import atexit
 import email
 import math
@@ -17,7 +18,7 @@ import sys
 import os
 import re
 from calendar_setup import calendar_setup
-import add_c_event
+from add_calendar_event import add_c_event
 
 def add_todo(todo):
     print("Adding Item to Todo List")
@@ -30,12 +31,13 @@ def add_todo(todo):
     print("Item Added")
     return
 
-def add_calendar_event(name, start, end):
+def add_calendar_event(name, start, end, date):
+    print("Creating Event...")
     try:
-        add_c_event.setup_event(name,start,end)
-        print("Sucessfully added event '" + name + "' to calendar.")
+        add_c_event.main(name,start,end,date)
+        print("\t++Sucessfully added event '" + name + "' to calendar.")
     except Exception:
-        print("Error with adding event '" + name + "' to calendar.")
+        print("\t--ERROR with adding event '" + name + "' to calendar.")
 
 def setup_calendar_events():
 
@@ -325,6 +327,8 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
                 if year_check == None:
                     day_of_week[0] = "20" + day_of_week[0]
 
+                users_list[active_user_index].set_date("-".join(day_of_week))
+
                 for i in range(len(day_of_week)):
                     day_of_week[i] = int(day_of_week[i])
 
@@ -336,25 +340,25 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
                 if str(day_of_week_datetime).split()[0] < str(datetime.now()).split()[0]:
 
                     reply_body += "I'm sorry, but you cannot schedule an event in the past!"
-
-                elif days_events == None or days_events == []:
-                    for i in json_week["Weekdays"]:
-                        if day_of_week == i:
-                            #Weekday
-                            reply_body += "Conrad has no events scheduled on " + usr_date.group(1).replace(" ", "") + ".  (" + day_of_week + ")\n"
-                            if any(x in day_of_week for x in ["Monday","Wednesday","Friday"]):
-                                reply_body += "Let me know what time between " + str(json_working_hours["MWF"][0]) + "am and " + str(json_working_hours["MWF"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
-                                reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
-                            else:
-                                reply_body += "Let me know what time between " + str(json_working_hours["TTH"][0]) + "am and " + str(json_working_hours["TTH"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
-                                reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
-                            break
-                    else:
-                        #Weekend
-                        reply_body += "Conrad has no events scheduled on " + usr_date.group(1).replace(" ","") + ".  (" + day_of_week + ")\n"
-                        reply_body += "Let me know what time between " + str(json_working_hours["SSU"][0]) +  "am and " + str(json_working_hours["SSU"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
-                        reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
-
+                    '''
+                    elif days_events == None or days_events == []:
+                        for i in json_week["Weekdays"]:
+                            if day_of_week == i:
+                                #Weekday
+                                reply_body += "Conrad has no events scheduled on " + usr_date.group(1).replace(" ", "") + ".  (" + day_of_week + ")\n"
+                                if any(x in day_of_week for x in ["Monday","Wednesday","Friday"]):
+                                    reply_body += "Let me know what time between " + str(json_working_hours["MWF"][0]) + "am and " + str(json_working_hours["MWF"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
+                                    reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
+                                else:
+                                    reply_body += "Let me know what time between " + str(json_working_hours["TTH"][0]) + "am and " + str(json_working_hours["TTH"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
+                                    reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
+                                break
+                        else:
+                            #Weekend
+                            reply_body += "Conrad has no events scheduled on " + usr_date.group(1).replace(" ","") + ".  (" + day_of_week + ")\n"
+                            reply_body += "Let me know what time between " + str(json_working_hours["SSU"][0]) +  "am and " + str(json_working_hours["SSU"][1]) + "pm you would like to meet with him, and how long you expect the meeting to be.\n"
+                            reply_body += "For example: '10am for 2 hours' would schedule an event from 10am-12pm."
+                    '''
                 else:
 
                     start_end_times = [[]] #[[start,end],[start,end]]
@@ -484,13 +488,15 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
                         else:
                             reply_body += "I'm sorry, Conrad does not have any open time slots for " + usr_date.group(1) + "."
+
+                    users_list[active_user_index].change_stage(stages.Pick_Timeslot)
+                    users_list[active_user_index].set_timeslots(timeslots)
             else:
 
                 reply_body += "I can see that your trying to schedule an event, but I cant tell what date your trying to inquire about!\n\nSorry!"
 
 
-            users_list[active_user_index].change_stage(stages.Pick_Timeslot)
-            users_list[active_user_index].set_timeslots(timeslots)
+
 
         if any(x in body for x in ["calendar","calender"]):
 
@@ -548,12 +554,74 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
         if key_match.match(body) and not check_key(str(reply_data[5])):
 
-            reply_body += "hmmmm, I can tell you tried to attach a key (or something that looks like one), but I dont have that key on file!\nPlease double check to make sure you got your key correct."
+            reply_body += "hmmmm, I can tell you tried to attach a key (or something that looks like one), but I don't have that key on file!\nPlease double check to make sure you got your key correct."
 
         if reply_body == "":
 
             print("No Keywords Detected")
-            reply_body = "I'm sorry to report that I'm not sure what your asking! Perhaps if you use on the of the following keywords I will be more likely to understand what you want me to do.\n\n'Save'   -I'll save your message under a key, you can access it whenever simply by sending the key back.\n'Schedule'   -Schedule an event with Conrad Selig, please include a date.\n\tFor example: 'Please schedule an event on " + str(datetime.now()).split()[0][5:] + "-" + str(datetime.now()).split()[0][:4] + "'\n\nSorry for the inconvenience!"
+            reply_body = "I'm sorry to report that I'm not sure what your asking! Perhaps if you use one of the following keywords I will be more likely to understand what you want me to do.\n\n \
+            'Save'   -I'll save your message under a key, you can access it whenever simply by sending the key back.\n \
+            'Calendar'   -I'll send you all of Conrad's calendar events, looking for a specific one? Include a date and I'll narrow down your search.\n \
+            'Schedule'   -Schedule an event with Conrad Selig, please include a date. For example: 'Please schedule an event on " + str(datetime.now()).split()[0][5:] + "-" + str(datetime.now()).split()[0][:4] + "'\n\n" + \
+            "Sorry for the inconvenience!"
+
+        return reply_body
+
+    elif operation == "c":
+
+        reply_body = ""
+        selected_slots = []
+        event_name = ""
+        raw_event_name = ""
+
+        timeslots = users_list[active_user_index].get_timeslots()
+
+        try:
+            while True:
+                search = re.search(".*?([0-9][0-9]?)", body)
+                if search != None:
+                    selected_slots.append(int(search.group(1)))
+                body = body.replace(search.group(1), "")
+        except AttributeError:
+            if len(selected_slots) == 0:
+                reply_body += "I could not find your desired time slot(s) in your last message, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'"
+                return reply_body
+
+        selected_slots.sort()
+        for i in range(len(selected_slots)):
+            selected_slots[i] = str(selected_slots[i])
+
+        search = re.search(".*? (an|a|for) (the )?(.*)", body)
+
+        if search != None:
+            event_name = search.group(3)
+            for i in [ "," , ".", "…" , ";" , "!" , "?" , "-" , "(" , ")" , "\n" , "\r" , '"' , "'", "’", '”', "“"]:
+                event_name = event_name.replace(i,"")
+            raw_event_name = event_name
+            event_name = event_name.title()  + " - " + str(users_list[active_user_index].get_name()[0]) + " " + str(users_list[active_user_index].get_name()[1])
+        else:
+            reply_body += "I could not find a name for your event, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'"
+            return reply_body
+
+        try:
+            start_time = timeslots[int(selected_slots[0]) - 1][1]
+            end_time = timeslots[int(selected_slots[-1]) - 1][2]
+        except IndexError:
+            reply_body += "It appears you specified an invalid time slot, please try again, and make sure to only use time slots that I have provided."
+            return reply_body
+
+        print("Setting up event...")
+        print("Event Name: " + event_name)
+        print("Start Time: " + start_time)
+        print("End Time: " + end_time)
+
+        add_calendar_event(event_name, start_time, end_time, users_list[active_user_index].get_date())
+
+        reply_body += "I've added the event '" + raw_event_name + "' to Conrad's calendar, starting at " + start_time + " and ending at " + end_time + "."
+
+        users_list[active_user_index].change_stage(stages.Initial)
+
+        sender(["conrad.selig@mines.sdsmt.edu", ["Conrad","Selig"], "Event Created: " + event_name,"I'm just letting you know that a new event was just added to your calendar.\n'" + event_name + "' from " + start_time + " to " + end_time + " on " + users_list[active_user_index].get_date() + ".\n\n","","","Dear Mr. Selig,\n\n", "Your Faithful Servent,\nMike"])
 
         return reply_body
 
@@ -562,7 +630,7 @@ def main():
     test_count = 1
     TIME = 15
     #last_message = addr 0, name 1, subject 2, body 3
-    reply_data = [] #addr 0, name 1, subject 2, body 3, new_key 4, attach_key 5, header 6
+    reply_data = [] #addr 0, name 1, subject 2, body 3, new_key 4, attach_key 5, header 6, sig 7
     clines = []
     global users_list
     users_list = []
@@ -570,7 +638,7 @@ def main():
     print("Retrieving last data... ")
     last_message = receiver()
     last_message[3] = bytes.decode(last_message[3], "utf-8")
-    print("Initial Data Recieved: " + str(last_message))
+    print("Initial Data Received: " + str(last_message))
 
     print("Getting User Records...")
     file = open("users.txt","r")
@@ -578,10 +646,10 @@ def main():
     file.close()
     print("\t", len(data), "users found")
     for i in range(len(data)):
-        data[i] = data[i].split(":")
+        data[i] = data[i].split("#")
         data[i][1] = data[i][1].split(",")
         print("\t\t" + data[i][1][0] + " " + data[i][1][1])
-        users_list.append(usrs(data[i][0],data[i][1],stages(int(data[i][2])),[data[i][3].split("-") for x in data[i][3].split("+")]))
+        users_list.append(usrs(data[i][0],data[i][1],stages(int(data[i][2])),[x.split("-") for x in data[i][3].rstrip().split("+")],str(data[i][4]).replace("\n","")))
 
     #print(users_list[0].get_timeslots())
 
@@ -646,7 +714,7 @@ def main():
                         break
                 else:
                     print("New User Detected: Creating Account")
-                    users_list.append(usrs(last_message[0],last_message[1], stages.Initial, []))
+                    users_list.append(usrs(last_message[0],last_message[1], stages.Initial, [], ""))
 
                 for i in range(len(users_list)):
                     if users_list[i].get_name()[0] == reply_data[1][0] and users_list[i].get_name()[1] == reply_data[1][1]:
@@ -656,6 +724,7 @@ def main():
                 if len(last_message[3]) >= 80 or logic("a", last_message[3], reply_data, active_user_index) == "":
 
                     reply_data.append(generate_key(last_message[1]))
+                    reply_data[3] = "I've saved your message and generated a unique key for you to access it with. If you would ever like to retrieve it, simply send this key back to me.\nYour Key: " + reply_data[-1] + "\n\n"
 
                     if logic("a", last_message[3], reply_data, active_user_index) != "":
                         reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
@@ -668,20 +737,21 @@ def main():
                 # Else do not generate key, see if key exists and add attachment
                 else:
 
+                    reply_data[3] = "I've attached the record requested in accordance to the key I recieved.\nIf you ever need that record again, that same key will still work to access it."
+
                     reply_data.append("")
                     if logic("a", last_message[3], reply_data, active_user_index) != "":
                         reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
                     else:
                         reply_data.append("")
 
-
                 if users_list[active_user_index].get_stage() == stages.Initial:
 
-                    reply_data[3] = logic("b", last_message[3], reply_data, active_user_index)
+                    reply_data[3] += logic("b", last_message[3], reply_data, active_user_index)
 
-                elif user_list[active_user_index].get_stage() == stages.Pick_Timeslot:
+                elif users_list[active_user_index].get_stage() == stages.Pick_Timeslot:
 
-                    reply_data[3] = logic("c", last_message[3], reply_data, active_user_index)
+                    reply_data[3] += logic("c", last_message[3], reply_data, active_user_index)
 
                 record_message(last_message, reply_data[-2])
                 save_message_file(reply_data, last_message[3])
@@ -705,20 +775,21 @@ def main():
         print("\n\nKeyboard Interrupt")
         exit()
 
-
-
 @atexit.register
 def save_usrs():
     print("\n\nProgram Ending, Saving Users")
-    try:
-        file = open("users.txt","w")
-        for i in users_list:
-            timeslots = ["-".join(x) for x in i.get_timeslots()]
-            timeslots = "+".join(timeslots)
-            file.write(i.get_addr() + ":" + str(i.get_name()[0]) + "," + str(i.get_name()[1]) + ":" + str(i.get_stage().value) + ":" + timeslots + "\n")
-        file.close()
-    except Exception:
-        print("Error with saving users... Leaving file unchanged")
+    #try:
+    file = open("users.txt", "w")
+    for i in users_list:
+        timeslots = i.get_timeslots()
+        if "\n" in timeslots:
+            timeslots = timeslots.remove("\n")
+        timeslots = ["-".join(x) for x in i.get_timeslots()]
+        timeslots = "+".join(timeslots)
+        file.write(i.get_addr() + "#" + str(i.get_name()[0]) + "," + str(i.get_name()[1]) + "#" + str(i.get_stage().value) + "#" + timeslots + "#" + i.get_date() + "\n")
+    file.close()
+    #except Exception:
+     #   print("Error with saving users.")
 
 class stages(Enum):
     Initial = 0
@@ -729,13 +800,15 @@ class usrs:
     addr = ""
     stage = stages
     timeslots = []
+    date = "" #year-month-day  ex: 2017-12-07
 
-    def __init__(self,in_addr,in_name,in_stage,in_timeslots):
+    def __init__(self,in_addr,in_name,in_stage,in_timeslots, in_date):
         self.stage = stages.Initial
         self.name = in_name
         self.addr = in_addr
         self.stage = in_stage
         self.timeslots = in_timeslots
+        self.date = in_date
 
     def get_name(self):
         return self.name
@@ -754,6 +827,12 @@ class usrs:
 
     def get_timeslots(self):
         return self.timeslots
+
+    def set_date(self, in_date):
+        self.date = in_date
+
+    def get_date(self):
+        return self.date
 
 if __name__ == "__main__":
     main()
