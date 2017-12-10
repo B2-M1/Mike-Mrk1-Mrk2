@@ -236,7 +236,14 @@ def receiver():
     received = [] #addr, name, subject, body
 
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        #loop will attempt to connect to host once a second for one minute or until it connects.
+        for i in range(60):
+            try:
+                mail = imaplib.IMAP4_SSL("imap.gmail.com")
+            except Exception:
+                time.sleep(1)
+                continue
+            break
         mail.login("mike.adam.simon@gmail.com", "8R.wreyK_+t?AL9z")
         mail.list()
 
@@ -339,8 +346,6 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
                     day_of_week += "/" + year_search.group(1)
                 else:
                     day_of_week += "/" + str(datetime.now().year)
-
-                print("Date interpreted: " + day_of_week)
 
             if usr_date != None or day_of_week != "":
 
@@ -553,14 +558,15 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
                 else:
                     day_of_week += "/" + str(datetime.now().year)
 
-                print("Date interpreted: " + day_of_week)
-
             if date != None or day_of_week != "":
                 if date != None:
                     day_of_week = date.group(1)
 
                 print("Possible Date Found: " + day_of_week)
                 days_events = get_day_events(events,day_of_week)
+                if len(days_events) == 0:
+                    reply_body += "There are no events on " + day_of_week + ".\n"
+                    return reply_body
                 if days_events == None or days_events == "":
                     reply_body += "I did not find any events for " + day_of_week.replace(" ","") + ",\nSorry!"
                 else:
