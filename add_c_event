@@ -50,10 +50,14 @@ def get_credentials():
         print('Storing credentials to ' + credential_path)
     return credentials
 
-def setup_event(name, start, end):
-    return
+def setup_event(name, start, end, date):
+    #event = {'summary': 'Test Event', 'start': {'dateTime': '2017-12-09T17:00:00-07:00'}, 'end': {'dateTime': '2017-12-09T18:00:00-07:00'}}
 
-def main():
+    event = {"summary": name, "start": {"dateTime": date + "T" + start +":00-07:00"}, "end": {"dateTime": date + "T" + end + ":00-07:00"}}
+
+    return event
+
+def main(name,start,end,date):
     """Shows basic usage of the Google Calendar API.
 
     Creates a Google Calendar API service object and outputs a list of the next
@@ -98,7 +102,8 @@ def main():
     }
     '''
 
-    event = {'summary': 'Test Event', 'start': {'dateTime': '2017-12-09T17:00:00-07:00'}, 'end': {'dateTime': '2017-12-09T18:00:00-07:00'}}
+    #event = {'summary': 'Test Event', 'start': {'dateTime': '2017-12-09T17:00:00-07:00'}, 'end': {'dateTime': '2017-12-09T18:00:00-07:00'}}
+    event = setup_event(name,start,end,date)
     event = service.events().insert(calendarId='primary', body=event).execute()
 
 if __name__ == '__main__':
