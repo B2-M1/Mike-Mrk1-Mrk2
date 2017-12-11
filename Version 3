@@ -232,8 +232,25 @@ def sender(reply_data): #toaddr, name, subject, in_body, filename
 
     print("Reply Sent")
 
-def receiver():
+def receiver(mode):
     received = [] #addr, name, subject, body
+
+    def save_attachment(msg, download_folder="../MessageAttachments/"):
+        att_path = "No attachment found."
+        for part in msg.walk():
+            if part.get_content_maintype() == 'multipart':
+                continue
+            if part.get('Content-Disposition') is None:
+                continue
+
+            filename = part.get_filename()
+            att_path = os.path.join(download_folder, filename)
+
+            if not os.path.isfile(att_path):
+                fp = open(att_path, 'wb')
+                fp.write(part.get_payload(decode=True))
+                fp.close()
+        return att_path
 
     try:
         #loop will attempt to connect to host once a second for one minute or until it connects.
@@ -249,34 +266,47 @@ def receiver():
 
         mail.select("inbox")
 
-        result, data = mail.uid('search', None, "ALL")  # search and return uids instead
+        result, data = mail.uid('search', None, mode)  # search and return uids instead
 
-        latest_email_uid = data[0].split()[-1]
+        if data != [b'']:
 
-        result, data = mail.uid('fetch', latest_email_uid, '(RFC822)')  # RFC822 is id for mail body
+            latest_email_uid = data[0].split()[-1]
 
-        raw_email = data[0][1]
+            result, data = mail.uid('fetch', latest_email_uid, '(RFC822)')  # RFC822 is id for mail body
 
-        email_message = email.message_from_bytes(raw_email)
+            raw_email = data[0][1]
 
-        received.append(email.utils.parseaddr(email_message["From"])[1])
-        received.append(email.utils.parseaddr(email_message["From"])[0].split(" "))
-        received.append(str(email.header.decode_header(email_message['Subject'])[0])[2:-8])
+            email_message = email.message_from_bytes(raw_email)
 
-        if email_message.is_multipart():
-            for part in email_message.walk():
-                ctype = part.get_content_type()
-                cdispo = str(part.get('Content-Disposition'))
+            att_path = save_attachment(email_message)
+            if att_path == "No attachment found.":
+                att_return = ""
+            else:
+                att_return = "I've detected an attached file by the name of " + att_path.replace("../MessageAttachments/","") + ". I've saved this file and will hold onto it for you."
 
-                # skip any text/plain (txt) attachments
-                if ctype == 'text/plain' and 'attachment' not in cdispo:
-                    received.append(part.get_payload(decode=True))  # decode
-                    break
-        # not multipart - i.e. plain text, no attachments, keeping fingers crossed
+            print(att_path)
+
+            received.append(email.utils.parseaddr(email_message["From"])[1])
+            received.append(email.utils.parseaddr(email_message["From"])[0].split(" "))
+            received.append(str(email.header.decode_header(email_message['Subject'])[0])[2:-8])
+
+            if email_message.is_multipart():
+                for part in email_message.walk():
+                    ctype = part.get_content_type()
+                    cdispo = str(part.get('Content-Disposition'))
+
+                    # skip any text/plain (txt) attachments
+                    if ctype == 'text/plain' and 'attachment' not in cdispo:
+                        received.append(part.get_payload(decode=True))  # decode
+                        break
+            # not multipart - i.e. plain text, no attachments, keeping fingers crossed
+            else:
+                received.append(email_message.get_payload(decode=True))
+
+            return received, att_return
+
         else:
-            received.append(email_message.get_payload(decode=True))
-
-        return received
+            return "no new", ""
 
     except KeyboardInterrupt:
         print("Keyboard Interrupt, program ending")
@@ -625,9 +655,10 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
             print("No Keywords Detected")
             reply_body = "I'm sorry to report that I'm not sure what your asking! Perhaps if you use one of the following keywords I will be more likely to understand what you want me to do.\n\n \
-            'Save'   -I'll save your message under a key, you can access it whenever simply by sending the key back.\n \
+            'Save'   -I'll save your message under a key, you can access it whenever simply by sending the key back. You'll only need to specify this if your asking for a record back.\n \
             'Calendar'   -I'll send you all of Conrad's calendar events, looking for a specific one? Include a date and I'll narrow down your search.\n \
-            'Schedule'   -Schedule an event with Conrad Selig, please include a date. For example: 'Please schedule an event on " + str(datetime.now()).split()[0][5:] + "-" + str(datetime.now()).split()[0][:4] + "'\n\n" + \
+            'Schedule'   -Schedule an event with Conrad Selig, please include a date. For example: 'Please schedule an event on " + str(datetime.now()).split()[0][5:] + "-" + str(datetime.now()).split()[0][:4] + "'\n \
+            'Features'   -Curious what all my functions are? Ask nicely and I might tell you! (not yet implemented)\n\n" + \
             "Sorry for the inconvenience!"
 
         return reply_body
@@ -643,14 +674,16 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
         try:
             while True:
-                search = re.search(".*?([0-9][0-9]?)", body)
+                search = re.search(".*?( |-|,)([0-9][0-9]?)( |-|,)", body)
                 if search != None:
-                    selected_slots.append(int(search.group(1)))
-                body = body.replace(search.group(1), "")
+                    selected_slots.append(int(search.group(2)))
+                body = body.replace(search.group(2), "")
         except AttributeError:
             if len(selected_slots) == 0:
                 reply_body += "I could not find your desired time slot(s) in your last message, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'"
                 return reply_body
+
+        print(str(selected_slots))
 
         selected_slots.sort()
         for i in range(len(selected_slots)):
@@ -684,7 +717,7 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
         reply_body += "I've added the event '" + raw_event_name + "' to Conrad's calendar, starting at " + start_time + " and ending at " + end_time + "."
 
-        users_list[active_user_index].change_stage(stages.Initial)
+        #users_list[active_user_index].change_stage(stages.Initial)
 
         sender(["conrad.selig@mines.sdsmt.edu", ["Conrad","Selig"], "Event Created: " + event_name,"I'm just letting you know that a new event was just added to your calendar.\n'" + event_name + "' from " + start_time + " to " + end_time + " on " + users_list[active_user_index].get_date() + ".\n\n","","","Dear Mr. Selig,\n\n", "Your Faithful Servent,\nMike"])
 
@@ -699,9 +732,10 @@ def main():
     clines = []
     global users_list
     users_list = []
+    att_return = ""
 
     print("Retrieving last data... ")
-    last_message = receiver()
+    last_message, att_return = receiver("ALL")
     last_message[3] = bytes.decode(last_message[3], "utf-8")
     print("Initial Data Received: " + str(last_message))
 
@@ -736,9 +770,11 @@ def main():
             print("\n\n")
             # end timer
 
-            new_message = receiver()
-            new_message[3] = bytes.decode(new_message[3], "utf-8")
-            if last_message != new_message:
+            new_message, att_return = receiver("UNSEEN")
+
+            if new_message != "no new":
+
+                new_message[3] = bytes.decode(new_message[3], "utf-8")
 
                 # Removing reply data
                 reply = False
@@ -809,6 +845,9 @@ def main():
                         reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
                     else:
                         reply_data.append("")
+
+                if att_return != "":
+                    reply_data[3] += att_return + "\n\n"
 
                 if users_list[active_user_index].get_stage() == stages.Initial:
 
