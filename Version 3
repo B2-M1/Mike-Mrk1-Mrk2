@@ -7,6 +7,7 @@ from dateutil import parser
 from random import randint
 from enum import Enum
 import calendar
+import datetime
 import smtplib
 import imaplib
 import string
@@ -35,22 +36,26 @@ def build_events():
 
     print("\t", end = "")
 
-    for next_event in events:
+    for i in range(len(events)):
 
         print("+", end = "")
 
-        next_date = "-".join([next_event[0][2], next_event[0][0], next_event[0][1]])
-        next_start = next_event[1]
-        next_end = next_event[2]
-        next_name = next_event[3]
+        next_date = "-".join([events[i][0][2], events[i][0][0], events[i][0][1]])
+        next_start = events[i][1]
+        next_end = events[i][2]
+        next_name = events[i][3]
 
-        next_remind = int(next_start.replace(":", "")) - 40
-        next_remind -= 10
-        if (next_remind + 40) % 100 == 0:
-            next_remind += 40
-        next_remind = str(next_remind)[:2] + ":" + str(next_remind)[2:]
+        next_remind = datetime.datetime.strptime(next_start, "%H:%M") - datetime.timedelta(minutes=10)
 
-        events_list.append(event(next_name, next_start, next_end, next_date, next_remind))
+        for i in range(len(events_list)):
+            if [next_name, next_date, next_start, next_end] == events_list[i].get_all_raw():
+                break
+        else:
+            events_list.append(event(next_name, next_start, next_end, next_date, next_remind.strftime("%H:%M")))
+
+    #results.sort(key=lambda r: r.person.birthdate)
+
+    events_list.sort(key=lambda r: r.start_time)
 
     print()
     return events_list
@@ -220,8 +225,8 @@ def save_message_file(reply_data, body):
 
     return
 
-#addr 0, name 1, subject 2, body 3, new_key 4, attach_key 5, header 6, sig 7
-def sender(reply_data): #toaddr, name, subject, in_body, filename
+def sender(reply_data):
+    # addr 0, name 1, subject 2, body 3, new_key 4, attach_key 5, header 6, sig 7
     print("\nSending Reply...")
     fromaddr = "mike.adam.simon@gmail.com"
     #mrmrs = get_mrmrs(name[0])
@@ -773,6 +778,7 @@ def main():
     att_return = ""
     save_message = False
     reminder_sent = False
+    event_refresh_time = datetime.datetime.now() + datetime.timedelta(minutes=15)
 
     print("Setting up event objects...")
     events_list = build_events()
@@ -795,7 +801,6 @@ def main():
         users_list.append(usrs(data[i][0],data[i][1],stages(int(data[i][2])),[x.split("-") for x in data[i][3].rstrip().split("+")],str(data[i][4]).replace("\n","")))
 
     try:
-
         while True:
             print()
             # Timer
@@ -814,7 +819,7 @@ def main():
 
             #do reminder check
             print("Checking for Needed Reminders...")
-            if datetime.now() > datetime.strptime(str(events_list[0].get_remind_time()), "%Y-%m-%d %H:%M:%S") and not events_list[0].get_reminded():
+            if datetime.datetime.now() > datetime.datetime.strptime(str(events_list[0].get_remind_time()), "%Y-%m-%d %H:%M:%S") and not events_list[0].get_reminded():
                 print("Sending Reminder...")
                 events_list[0].set_reminded()
                 sender(["conrad.selig@mines.sdsmt.edu", ["Conrad", "Selig"], "Appointment Reminder","I'm sending this message to remind you about your next appointment.\n" + events_list [0].get_all() + "\n\n", "", "", "Dear Mr. Selig,\n\n","Your Faithful Servent,\nMike"])
@@ -822,9 +827,11 @@ def main():
             else:
                 print("None")
 
-            if datetime.now() > datetime.strptime(str(events_list[0].get_end_time()), "%Y-%m-%d %H:%M:%S"):
-                eventss_list = build_events()
+            if datetime.datetime.now() > event_refresh_time:
+                event_refresh_time = event_refresh_time + datetime.timedelta(minutes=15)
+                events_list = build_events()
 
+            print("Checking for New Messages...")
             new_message, att_return = receiver("UNSEEN")
 
             if new_message != "no new":
@@ -926,7 +933,8 @@ def main():
             else:
                 print("--No New Messages--\t\t\t\t\t\t\t\t\t", test_count)
                 print("\tLast Message Was From: " + last_message[0])
-                print("Next Reminder Will Be At: " + events_list[0].get_remind_time())
+                print("Next Reminder Will Be At: " + events_list[0].get_remind_time()[:16])
+                print("Events will be refreshed at: " + str(event_refresh_time)[11:19])
                 test_count += 1
 
             reply_data = []
@@ -937,7 +945,7 @@ def main():
         print("\n\nKeyboard Interrupt")
         exit()
 
-#@atexit.register
+@atexit.register
 def save_usrs():
     print("\n\nProgram Ending, Saving Users")
     #try:
@@ -970,6 +978,9 @@ class event:
 
     def get_all(self):
         return self.name + " on " + self.date + " from " + self.start_time.split()[1][:5] + " to " + self.end_time.split()[1][:5]
+
+    def get_all_raw(self):
+        return [self.name, self.date, self.start_time, self.end_time]
 
     def get_reminded(self):
         return self.reminded
