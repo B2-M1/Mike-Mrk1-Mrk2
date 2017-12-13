@@ -3,6 +3,7 @@ import gender_guesser.detector as gender
 from email.mime.text import MIMEText
 from datetime import datetime
 from pytodoist import todoist
+from dateutil import parser
 from random import randint
 from enum import Enum
 import calendar
@@ -19,6 +20,40 @@ import os
 import re
 from calendar_setup import calendar_setup
 from add_calendar_event import add_c_event
+
+def build_events():
+
+    next_date = ""
+    next_start = ""
+    next_end = ""
+    next_name = ""
+    next_remind = ""
+
+    events_list = []
+
+    events = setup_calendar_events()
+
+    print("\t", end = "")
+
+    for next_event in events:
+
+        print("+", end = "")
+
+        next_date = "-".join([next_event[0][2], next_event[0][0], next_event[0][1]])
+        next_start = next_event[1]
+        next_end = next_event[2]
+        next_name = next_event[3]
+
+        next_remind = int(next_start.replace(":", "")) - 40
+        next_remind -= 10
+        if (next_remind + 40) % 100 == 0:
+            next_remind += 40
+        next_remind = str(next_remind)[:2] + ":" + str(next_remind)[2:]
+
+        events_list.append(event(next_name, next_start, next_end, next_date, next_remind))
+
+    print()
+    return events_list
 
 def add_todo(todo):
     print("Adding Item to Todo List")
@@ -125,7 +160,7 @@ def generate_key(name):
     return new_key
 
 def check_key(key):
-    excists = False #a = no key, b = key found, c = key format detected
+    exists = False
 
     if key == "":
         print("Key in keys? : False")
@@ -136,11 +171,11 @@ def check_key(key):
     data = file.read()
 
     if key in data:
-        excists = True
+        exists = True
 
-    print("Key in keys? : " + str(excists))
+    print("Key in keys? : " + str(exists))
 
-    return excists
+    return exists
 
 def record_key(key):
     file = open("keys.txt","a", buffering=1)
@@ -211,24 +246,18 @@ def sender(reply_data): #toaddr, name, subject, in_body, filename
         attachment.add_header('Content-Disposition', 'attachment', filename=filename)
         msg.attach(attachment)
 
-        '''
-        print("ATTACHING THIS KEY:    " + str(reply_data[5].rstrip()))
-        attachment = open("../Messages/" + str(reply_data[5].rstrip()) + ".txt", "rb")
-
-        part = MIMEBase('application', 'octet-stream')
-        part.set_payload((attachment).read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', "attachment; filename= %s" % str(reply_data[5].rstrip()))
-
-        msg.attach(part)
-        '''
-
-    server = smtplib.SMTP('smtp.gmail.com', 587)
-    server.starttls()
-    server.login(fromaddr, "8R.wreyK_+t?AL9z")
-    text = msg.as_string()
-    server.sendmail(fromaddr, reply_data[0], text)
-    server.quit()
+    for i in range(60):
+        try:
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(fromaddr, "8R.wreyK_+t?AL9z")
+            text = msg.as_string()
+            server.sendmail(fromaddr, reply_data[0], text)
+            server.quit()
+            break
+        except Exception:
+            time.sleep(1)
+            continue
 
     print("Reply Sent")
 
@@ -254,13 +283,16 @@ def receiver(mode):
 
     try:
         #loop will attempt to connect to host once a second for one minute or until it connects.
+        print("\t", end = "")
         for i in range(60):
             try:
                 mail = imaplib.IMAP4_SSL("imap.gmail.com")
             except Exception:
                 time.sleep(1)
+                print("#", end = "")
                 continue
             break
+        print("")
         mail.login("mike.adam.simon@gmail.com", "8R.wreyK_+t?AL9z")
         mail.list()
 
@@ -333,11 +365,6 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
         key_match = re.compile(".*?[A-Z]{2}[0-9]{7}")
 
         reply_body = ""
-
-        if "save" in body:
-
-            print("'Save' Keyword Detected")
-            reply_body += "I've saved your message under the key " + str(reply_data[4]) + "\nSend me this key back and any time to retrieve your file."
 
         if any(x in body for x in ["time slot","timeslot","schedule"]):
 
@@ -655,7 +682,6 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
             print("No Keywords Detected")
             reply_body = "I'm sorry to report that I'm not sure what your asking! Perhaps if you use one of the following keywords I will be more likely to understand what you want me to do.\n\n \
-            'Save'   -I'll save your message under a key, you can access it whenever simply by sending the key back. You'll only need to specify this if your asking for a record back.\n \
             'Calendar'   -I'll send you all of Conrad's calendar events, looking for a specific one? Include a date and I'll narrow down your search.\n \
             'Schedule'   -Schedule an event with Conrad Selig, please include a date. For example: 'Please schedule an event on " + str(datetime.now()).split()[0][5:] + "-" + str(datetime.now()).split()[0][:4] + "'\n \
             'Features'   -Curious what all my functions are? Ask nicely and I might tell you! (not yet implemented)\n\n" + \
@@ -680,7 +706,11 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
                 body = body.replace(search.group(2), "")
         except AttributeError:
             if len(selected_slots) == 0:
-                reply_body += "I could not find your desired time slot(s) in your last message, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'"
+                if any(x in body for x in ["cancel", "stop", "quit"]):
+                    users_list[active_user_index].change_stage(stages.Initial)
+                    reply_body = "Your request to schedule an event has been cancelled. Access to all my functions has been restored."
+                    return reply_body
+                reply_body += "I could not find your desired time slot(s) in your last message, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'\nIf you no longer wish to schedule an event, just let me know that you would like to cancel."
                 return reply_body
 
         print(str(selected_slots))
@@ -693,12 +723,16 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
         if search != None:
             event_name = search.group(3)
-            for i in [ "," , ".", "…" , ";" , "!" , "?" , "-" , "(" , ")" , "\n" , "\r" , '"' , "'", "’", '”', "“"]:
+            for i in ["," , ".", "…" , ";" , "!" , "?" , "-" , "(" , ")" , "\n" , "\r" , '"' , "'", "’", '”', "“"]:
                 event_name = event_name.replace(i,"")
             raw_event_name = event_name
             event_name = event_name.title()  + " - " + str(users_list[active_user_index].get_name()[0]) + " " + str(users_list[active_user_index].get_name()[1])
         else:
-            reply_body += "I could not find a name for your event, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'"
+            reply_body += "I could not find a name for your event, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'\nIf you no longer wish to schedule an event, just let me know that you would like to cancel."
+            if any(x in body for x in ["cancel", "stop", "quit"]):
+                users_list[active_user_index].change_stage(stages.Initial)
+                reply_body = "Your request to schedule an event has been cancelled. Access to all my functions has been restored."
+                return reply_body
             return reply_body
 
         try:
@@ -706,6 +740,10 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
             end_time = timeslots[int(selected_slots[-1]) - 1][2]
         except IndexError:
             reply_body += "It appears you specified an invalid time slot, please try again, and make sure to only use time slots that I have provided."
+            if any(x in body for x in ["cancel", "stop", "quit"]):
+                users_list[active_user_index].change_stage(stages.Initial)
+                reply_body = "Your request to schedule an event has been cancelled. Access to all my functions has been restored."
+                return reply_body
             return reply_body
 
         print("Setting up event...")
@@ -717,7 +755,7 @@ def logic(operation, body, reply_data, active_user_index): #operation = char
 
         reply_body += "I've added the event '" + raw_event_name + "' to Conrad's calendar, starting at " + start_time + " and ending at " + end_time + "."
 
-        #users_list[active_user_index].change_stage(stages.Initial)
+        users_list[active_user_index].change_stage(stages.Initial)
 
         sender(["conrad.selig@mines.sdsmt.edu", ["Conrad","Selig"], "Event Created: " + event_name,"I'm just letting you know that a new event was just added to your calendar.\n'" + event_name + "' from " + start_time + " to " + end_time + " on " + users_list[active_user_index].get_date() + ".\n\n","","","Dear Mr. Selig,\n\n", "Your Faithful Servent,\nMike"])
 
@@ -733,11 +771,17 @@ def main():
     global users_list
     users_list = []
     att_return = ""
+    save_message = False
+    reminder_sent = False
+
+    print("Setting up event objects...")
+    events_list = build_events()
+    print("Objects built.\n")
 
     print("Retrieving last data... ")
     last_message, att_return = receiver("ALL")
     last_message[3] = bytes.decode(last_message[3], "utf-8")
-    print("Initial Data Received: " + str(last_message))
+    print("Initial Data Received: " + str(last_message) + "\n")
 
     print("Getting User Records...")
     file = open("users.txt","r")
@@ -749,8 +793,6 @@ def main():
         data[i][1] = data[i][1].split(",")
         print("\t\t" + data[i][1][0] + " " + data[i][1][1])
         users_list.append(usrs(data[i][0],data[i][1],stages(int(data[i][2])),[x.split("-") for x in data[i][3].rstrip().split("+")],str(data[i][4]).replace("\n","")))
-
-    #print(users_list[0].get_timeslots())
 
     try:
 
@@ -769,6 +811,19 @@ def main():
                 time.sleep(1)
             print("\n\n")
             # end timer
+
+            #do reminder check
+            print("Checking for Needed Reminders...")
+            if datetime.now() > datetime.strptime(str(events_list[0].get_remind_time()), "%Y-%m-%d %H:%M:%S") and not events_list[0].get_reminded():
+                print("Sending Reminder...")
+                events_list[0].set_reminded()
+                sender(["conrad.selig@mines.sdsmt.edu", ["Conrad", "Selig"], "Appointment Reminder","I'm sending this message to remind you about your next appointment.\n" + events_list [0].get_all() + "\n\n", "", "", "Dear Mr. Selig,\n\n","Your Faithful Servent,\nMike"])
+                print("Reminder Boolean Set : False")
+            else:
+                print("None")
+
+            if datetime.now() > datetime.strptime(str(events_list[0].get_end_time()), "%Y-%m-%d %H:%M:%S"):
+                eventss_list = build_events()
 
             new_message, att_return = receiver("UNSEEN")
 
@@ -822,29 +877,28 @@ def main():
                         active_user_index = i
 
                 # If message longer than 80 chars or does not have a key - give key
-                if len(last_message[3]) >= 80 or logic("a", last_message[3], reply_data, active_user_index) == "":
+                if len(last_message[3]) >= 80:
 
                     reply_data.append(generate_key(last_message[1]))
                     reply_data[3] = "I've saved your message and generated a unique key for you to access it with. If you would ever like to retrieve it, simply send this key back to me.\nYour Key: " + reply_data[-1] + "\n\n"
 
-                    if logic("a", last_message[3], reply_data, active_user_index) != "":
-                        reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
-                    else:
-                        reply_data.append("")
+                    reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
 
                     record_key(reply_data[-2])
+                    save_message = True
                     print("Generating Key: ", reply_data[-2])
 
-                # Else do not generate key, see if key exists and add attachment
                 else:
+                    reply_data.append("")
+
+                # Else do not generate key, see if key exists and add attachment
+                if logic("a", last_message[3], reply_data, active_user_index) != "":
 
                     reply_data[3] = "I've attached the record requested in accordance to the key I recieved.\nIf you ever need that record again, that same key will still work to access it."
 
+                    reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
+                else:
                     reply_data.append("")
-                    if logic("a", last_message[3], reply_data, active_user_index) != "":
-                        reply_data.append(logic("a", last_message[3], reply_data, active_user_index))
-                    else:
-                        reply_data.append("")
 
                 if att_return != "":
                     reply_data[3] += att_return + "\n\n"
@@ -857,8 +911,9 @@ def main():
 
                     reply_data[3] += logic("c", last_message[3], reply_data, active_user_index)
 
-                record_message(last_message, reply_data[-2])
-                save_message_file(reply_data, last_message[3])
+                if save_message:
+                    record_message(last_message, reply_data[-2])
+                    save_message_file(reply_data, last_message[3])
                 reply_data.append(get_header(last_message[1]))
                 reply_data.append(get_sig())
 
@@ -871,16 +926,18 @@ def main():
             else:
                 print("--No New Messages--\t\t\t\t\t\t\t\t\t", test_count)
                 print("\tLast Message Was From: " + last_message[0])
+                print("Next Reminder Will Be At: " + events_list[0].get_remind_time())
                 test_count += 1
 
             reply_data = []
+            save_message = False
 
 
     except KeyboardInterrupt:
         print("\n\nKeyboard Interrupt")
         exit()
 
-@atexit.register
+#@atexit.register
 def save_usrs():
     print("\n\nProgram Ending, Saving Users")
     #try:
@@ -895,6 +952,36 @@ def save_usrs():
     file.close()
     #except Exception:
      #   print("Error with saving users.")
+
+class event:
+    name = ""
+    start_time = ""
+    end_time = ""
+    date = ""
+    remind_time = ""
+    reminded = False
+
+    def __init__(self, in_name, in_start, in_end, in_date, in_remind):
+        self.name = in_name
+        self.start_time = in_date + " " + in_start + ":00"
+        self.end_time = in_date + " " + in_end + ":00"
+        self.date = in_date
+        self.remind_time = in_date + " " + in_remind + ":00"
+
+    def get_all(self):
+        return self.name + " on " + self.date + " from " + self.start_time.split()[1][:5] + " to " + self.end_time.split()[1][:5]
+
+    def get_reminded(self):
+        return self.reminded
+
+    def set_reminded(self):
+        self.reminded = True
+
+    def get_remind_time(self):
+        return self.remind_time
+
+    def get_end_time(self):
+        return self.end_time
 
 class stages(Enum):
     Initial = 0
