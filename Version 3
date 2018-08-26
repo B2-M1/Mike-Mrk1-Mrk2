@@ -1,1 +1,1962 @@
 
+from email.mime.multipart import MIMEMultipart
+import gender_guesser.detector as gender
+from email.mime.text import MIMEText
+from twilio.rest import Client
+from datetime import datetime
+from pytodoist import todoist
+from dateutil import parser
+from random import randint
+from enum import Enum
+import calendar
+import datetime
+import smtplib
+import imaplib
+import string
+import atexit
+import email
+import math
+import time
+import json
+import sys
+import os
+import re
+
+from Mike.Third.calendar_setup import calendar_setup
+from Mike.Third.add_calendar_event import add_c_event
+from Mike.Third.Habit_Tracker import habit_tracker
+from Mike.Third.FactorSplit import factorsplit
+from Mike.Third.trig_functions import trig_functions
+from Mike.Third.MIKEconsole import console
+
+
+'''
+todo:
+    Math. Conversions
+    Func. Alarm Clock
+    Func. Stopwatch
+    Func. Countdown Timer
+    Comm. Features
+    Func. Custom Reminders by Text or Email
+'''
+
+#todo: reminder email does not clear after sending, if another email is recived at the same time the reminder text will be present
+
+#takes the numeration and denominator of a fraction and simplifies the fraction. int_str dictates what type of return to give
+def simplify(numerator, denominator, int_str):
+
+    # check if fraction top heavy (simple division)
+    if numerator >= denominator:
+
+        # test if easy division
+        if int(numerator / denominator) == numerator / denominator:
+            numerator = numerator / denominator
+
+            #two returns are expected, I'll return 1 for denominator and account for it in main()
+            if int_str == "int":
+                return int(numerator), 1
+            else:
+                return str(int(numerator)), 1
+
+    #if no return, denominator must not be divisor. This will simplify the fraction
+    # greatest common factor
+    gcf = 1
+
+    # work from lowest to highest, sets gcf to largest found factor
+    for i in range(1, abs(int(denominator))):
+        # check if i is a factor of both
+        if numerator % i == 0 and denominator % i == 0:
+            gcf = i
+
+    #actually simplify the fraction
+    numerator = int(numerator / gcf)
+    denominator = int(denominator / gcf)
+
+    #return values based on int_str return specification
+    if int_str == "int":
+        return int(numerator), int(denominator)
+    else:
+        return str(int(numerator)), str(int(denominator))
+
+
+#Takes command from Logic(), communicates with habit_tracker.py to mark habits
+def mark_habit(habit_name):
+    #list of all habits, in same order as in habit_tracker.py so only indexes have to be referenced
+    activities = ["Retainer","Shower","Steps Goal","Drink Water","6+ Hours Sleep","<=2 Sodas","Study","Leave Campus","Clean","Code","New Music","Paint","Phone Call","Saw Friends","UAS","Work Out"]
+
+    print("Marking Habit...")
+
+    #checking all habits
+    for i in range(len(activities)):
+        #checks if habit in activities[] is same as habit_name
+        if habit_name.rstrip() == activities[i].lstrip():
+            print("\tHabit Found in List... Marking " + str(i))
+            #.add_tick() is in habit_tracker.py
+            habit_tracker.add_tick(i)
+            send_text(habit_name)
+            break
+
+    return
+
+
+#Sets up event objects from raw calendar data; used for reminders
+def build_events(events_list):
+
+    next_date = ""
+    next_start = ""
+    next_end = ""
+    next_name = ""
+    next_remind = ""
+
+    #counters are simply for console output
+    #prints 20xY list of - # for existing event, + for new event
+    marker_count = 0
+    total_count = 0
+
+    #setup_calendar_events() returns raw calendar data
+    events = setup_calendar_events()
+
+    print("\t", end = "")
+
+    #cycle through every event
+    for i in range(len(events)):
+
+        if marker_count == 20:
+            print("\n\t", end = "")
+            marker_count = 0
+
+        marker_count += 1
+        total_count += 1
+
+        #reformating to a more usfull output
+        next_date = "-".join([events[i][0][2], events[i][0][0], events[i][0][1]])
+        next_start = events[i][1]
+        next_end = events[i][2]
+        next_name = events[i][3]
+
+        #takes next_start and subtracts 15 minutes so reminder lands 15 minutes before event start
+        next_remind = datetime.datetime.strptime(next_start, "%H:%M") - datetime.timedelta(minutes=15)
+
+        for i in range(len(events_list)):
+
+            #checks if event object already exists
+            if [next_name, next_date, next_start, next_end] == events_list[i].get_all_raw():
+                print("#", end="")
+                break
+
+        #runs if event object does not exist
+        else:
+            #double check so we do not add events from the past
+            if datetime.datetime.strptime(next_start, "%H:%M") < datetime.datetime.now():
+                print("+", end="")
+                #creating event object
+                events_list.append(event(next_name, next_start, next_end, next_date, next_remind.strftime("%H:%M")))
+
+
+    print("\nObjects Built. (" + str(total_count) + ")\n")
+    return events_list
+
+
+#using todoist api to add events directly to my to-do list
+#param is name of item to be added
+def add_todo(todo):
+    print("Adding Item to Todo List")
+
+    #login to todoist
+    user = todoist.login("conrad.selig@mines.sdsmt.edu", "adGjl9@$&")
+
+    #selecting inbox
+    projects = user.get_projects()
+    inbox = user.get_project("Inbox")
+
+    #adding item
+    task = inbox.add_task(content=todo, priority=todoist.Priority.LOW)
+
+    print("Item Added")
+    return
+
+
+#adds calendar event by communicating with add_calendar_event.py
+def add_calendar_event(name, start, end, date):
+    print("Creating Event...")
+
+    #testing for error, if add_c_event.main() throws any errors they will trip here
+    try:
+        add_c_event.main(name,start,end,date)
+        print("\t++Sucessfully added event '" + name + "' to calendar.")
+    except Exception:
+        print("\t--ERROR with adding event '" + name + "' to calendar.")
+
+
+#gets raw event data from calendar_setup.py and formats it into list
+def setup_calendar_events():
+
+    #Loop is for network errors. Check once a second for one minute or until process completes.
+    for i in range(60):
+        try:
+            #calendar_setup.main() return list
+            events_file = calendar_setup.main()
+            break
+        except Exception:
+            time.sleep(1)
+
+    #sorts through every item in list and makes it into 2d list
+    for i in range(len(events_file)):
+
+        events_file[i] = events_file[i].split("&&")
+        events_file[i][-1] = events_file[i][-1].rstrip()
+        events_file[i][0] = events_file[i][0].split("-")
+
+        #formatting date to be standard english system
+        events_file[i][0][0], events_file[i][0][1], events_file[i][0][2] = events_file[i][0][1], events_file[i][0][2], events_file[i][0][0]
+
+    return events_file
+
+
+#pulls apart entire events list and returns just events that land on the specified date
+def get_day_events(events, date):
+
+    days_events = ""
+    events_list = []
+
+    #checks for different types of date formatting so all formats are accepted
+    for i in ["-","/","."]:
+        if i in date:
+            date = date.split(i)
+            #no break so that technically all formats in one string could still work
+
+    #makes sure day is 1 digits long
+    date[1] = date[1].zfill(2)
+
+    #checks to make sure year is formatted as four digits
+    year_check = re.search("([0-9]{2})[0-9]{2}", date[2])
+
+    #if not, add first two digits
+    if year_check == None:
+        date[2] = "20" + date[2]
+
+    print("Split Date: " + str(date))
+
+    #checks if input date and formatted date match and adds matches to events_list
+    for i in range(len(events)):
+        if date == events[i][0]:
+            events_list.append(events[i])
+
+    return events_list
+
+
+#gets a random signature line from sig.txt
+def get_sig():
+
+    #opening file, if fails, uses a default signature
+    try:
+        file = open("sig.txt", "r")
+    except IOError:
+        print("SIGNATURE FILE NOT OPENED")
+
+        #default signature if file does not open
+        return "\n\nWith Respect,\nMike"
+
+    #reading file
+    lines = file.readlines()
+    file.close()
+
+    #rand_index chooses the signature, used in the return.
+    rand_index = randint(0, len(lines) - 1)
+
+    #format included, no newline at end due to lines[rand_index] includes a newline
+    return "\n\n" + lines[rand_index] + "Mike"
+
+
+#retrives gender from name database for header
+def get_header(name):
+
+    #list of cases where I know that the database does not match
+    special_cases = [["Laine", "male"]]
+
+    #gender.Detector() is the database
+    d = gender.Detector()
+
+    #formatting name to match database format
+    this_gender = d.get_gender(name[0].title()).lower()
+
+    #checking special cases
+    for i in range(len(special_cases)):
+        if name[0] == special_cases[i][0]:
+            this_gender = special_cases[i][1]
+            break
+
+    #picking male of femail, if agender, use "firstname lastname"
+    if "female" in this_gender:
+        #half and half chance to in
+        # clude "dear"
+        if randint(0,1) == 0:
+            return "Dear Ms. " + name[0].title() + ",\n\n"
+        else:
+            return "Ms. " + name[0].title() + ",\n\n"
+
+    elif "male" in this_gender:
+
+        # half and half chance to include "dear"
+        if randint(0, 1) == 0:
+            return "Dear Mr. " + name[1].title() + ",\n\n"
+        else:
+            return "Mr. " + name[1].title() + ",\n\n"
+
+    else:
+
+        # half and half chance to include "dear"
+        if randint(0, 1) == 0:
+            return "Dear " + name[0] + " " + name[1] + ",\n\n"
+        else:
+            return name[0] + " " + name[1] + ",\n\n"
+
+
+#generates a random file key
+def generate_key(name):
+
+    #get first letters from first and last names for more personalized keys
+    fi = name[0][0]
+    #check for accounts that dont have a last name
+    try:
+        bi = name[1][0]
+    except IndexError:
+        #if they dont, assign this default
+        bi = "#"
+
+    #make sure all of my keys are ADMIN keys
+    if name[0] == "Conrad" and name[1] == "Selig":
+        base_key = "ADMIN"
+    else:
+        #standard format, as not all names are uppercase
+        base_key = fi.upper() + bi.upper()
+
+    #generate the random numbers
+    gen_key = str(randint(1000000, 9999999))
+
+    #build whole key
+    new_key = base_key + gen_key
+
+    #gets filenames from all records - os.getcwd() = Current Workin Directory
+    for filename in os.listdir(os.getcwd()):
+        #elminate files not message records
+        if not "." in filename:
+            #check for if key is duplicate
+            if new_key == filename:
+                print("DUPLICATE KEY")
+                print(filename)
+                print("Generating new key...")
+                #recursivly generates new keys until a non-duplicate is found, then destroys recursive stack
+                new_key = generate_key(" ".join(name))
+                print(new_key)
+                return new_key
+    return new_key
+
+
+#check is a key exists and return True if it does
+def check_key(key):
+    #default is that the key does not
+    exists = False
+
+    #check if key is empty string
+    if key == "":
+        print("Key in keys? : False")
+        return False
+
+    #open file, returns False if open fails
+    try:
+        file = open("keys.txt","r")
+    except FileNotFoundError or FileExistsError:
+        print("Key in keys? : FILE READ ERROR")
+        return False
+
+    #read file, reads as a single long string so I dont have to iterate through a list
+    data = file.read()
+    file.close()
+
+    #actual check for if it exists
+    if key in data:
+        exists = True
+
+    print("Key in keys? : " + str(exists))
+
+    return exists
+
+
+#records the entered key in keys.txt
+def record_key(key):
+
+    #open has no try-except, not technically safe but chance of failure is very very low
+    file = open("keys.txt","a", buffering=1)
+    file.write(key + "\n")
+    file.close()
+    return
+
+
+#creates single line records of recieved messages, used for key manual key retrieval as well as message searching
+def record_message(last_message, key):
+
+    #parsing required data
+    addr = last_message[0]
+    name = " ".join(last_message[1])
+    subject = last_message[2]
+
+    #opening file, does nothing if file fails to open
+    try:
+        file = open("records.txt", "a", buffering=1)
+    except FileExistsError or FileNotFoundError:
+        print("Record Saving ERROR")
+        return
+
+    #if key exists, save key, otherwise save entire message
+    #key
+    if key != "":
+        file.write(name + "  (" + addr + ")  at: " + str(
+            datetime.datetime.now().strftime('%m-%d-%Y %H:%M:%S')) + ". Subject: " + str(subject) + "   \/\/\/ Key = " + str(key) + "\n\n")
+    #message
+    else:
+        file.write(name + "  (" + addr + ")  at: " + str(
+            datetime.datetime.now().strftime('%m-%d-%Y %H:%M:%S')) + ". Subject: " + str(subject) + "   /\/\/\ Message = " + last_message[3] + "\n\n")
+
+    file.close()
+    print("Record Saved")
+
+    return
+
+
+#saves the actual .txt file for each message
+def save_message_file(reply_data, body):
+
+    #open file, does nothing if file fails to open
+    try:
+        file = open("../Messages/" + reply_data["new_key"] + ".txt", "w", buffering=1)
+    except FileNotFoundError or FileExistsError:
+        print("Message File Saving ERROR.")
+        return
+
+    data = ""
+
+    #building file forcing a standard format
+    data += "Message From: " + str(reply_data["addr"]) + "    (" + str(reply_data["addr"]) + ")"
+    data += "\nMessage Sent At: " + str(datetime.datetime.now().strftime('%m-%d-%Y %H:%M:%S'))
+    data += "\nSubject:   '" + str(reply_data["subject"]) + "'"
+    data += "\nMessage ->\n\n\n"
+    data += body
+    data += "\n\n[End message]"
+
+    file.write(data)
+
+    file.close()
+
+    print("Message File Saved.")
+
+    return
+
+
+#send confermation texts, currently used for letting me know that habits were marked
+def send_text(habit):
+
+    print("\nSending Confirmation Text...")
+
+    message_body = 'The message is confirm the marking of the following habit.\n' + habit
+
+    server = smtplib.SMTP("smtp.gmail.com", 587)
+
+    server.starttls()
+
+    server.login("mike.adam.simon@gmail.com", "8R.wreyK_+t?AL9z")
+
+    server.sendmail("Mike Mycroft", "9708173110@vtext.com", message_body)
+
+    print("\tText Message Sent.\n")
+
+    return
+
+
+#sends emails using all data from reply_data
+def sender(reply_data):
+
+    #reply_data format:
+    #addr 0, name 1, subject 2, body 3, new_key 4, attach_key 5, header 6, sig 7
+
+    print("\nSending Reply...")
+    fromaddr = "mike.adam.simon@gmail.com"
+
+    #MIMEMultipart() object takes in easy input and builds a email friendly variable for sending
+    msg = MIMEMultipart()
+
+    #inputing data into msg
+    msg['From'] = fromaddr
+    msg['To'] = reply_data["addr"]
+    msg['Subject'] = reply_data["subject"]
+
+    body = reply_data["header"] + reply_data["body"] + reply_data["sig"]
+
+    msg.attach(MIMEText(body, 'plain'))
+
+    #if key is not empty, attach message file
+    if reply_data["attach_key"] != "":
+
+        #build file path
+        filename = "../Messages/" + str(reply_data["attach_key"].rstrip()) + ".txt"
+
+        #no readtype as is defaults to "r"
+        f = open(filename)
+
+        #attaching file
+        attachment = MIMEText(f.read())
+        attachment.add_header('Content-Disposition', 'attachment', filename=filename)
+        msg.attach(attachment)
+
+    #block to login to email service, if network error occurs and cannot login, wait one second and try again. Makes attempts for one minute.
+    for i in range(60):
+        try:
+            #logging in, stops loop if successfull
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(fromaddr, "8R.wreyK_+t?AL9z")
+            #adding email data (recall that msg is a MIME var)
+            text = msg.as_string()
+
+            #send it!
+            server.sendmail(fromaddr, reply_data["addr"], text)
+
+            #similar to .close() for a file, but signals to email server that all actions are complete
+            server.quit()
+            break
+        except Exception:
+            time.sleep(1)
+            continue
+
+    print("Message Sent")
+
+
+#receives emails and parses them into a usable format
+def receiver(mode):
+    received = [] #addr, name, subject, body
+    error_count = 0
+
+    #function saves attachments. Only receiver uses it (or will ever use it), so its nested
+    def save_attachment(msg, download_folder="../MessageAttachments/"):
+        #default return for if no attachments
+        att_path = "No attachment found."
+        #look at msg data
+        for part in msg.walk():
+            #check for attachment
+            if part.get_content_maintype() == 'multipart':
+                continue
+            if part.get('Content-Disposition') is None:
+                continue
+
+            #get filename
+            filename = part.get_filename()
+            #get attachment path
+            att_path = os.path.join(download_folder, filename)
+
+            #if path is a file
+            if not os.path.isfile(att_path):
+                #open it
+                fp = open(att_path, 'wb')
+                #save it
+                fp.write(part.get_payload(decode=True))
+                #close it
+                fp.close()
+        #return path so receiver() knows a file was saved
+        return att_path
+
+    #try surrounds untill end of function, this is just a safty precaution to make sure
+    #connections to servers to do cause errors when user stops program in the middle of
+    #a retrieval operation.
+    try:
+        #loop will attempt to connect to host once every 10 seconds for 5 minutes or until it connects.
+        print("\t", end = "")
+        for i in range(30):
+            try:
+                mail = imaplib.IMAP4_SSL("imap.gmail.com")
+            except Exception:
+                time.sleep(10)
+                print("ERR", end = " ")
+                #counting errors for next block
+                error_count += 1
+                continue
+            break
+
+        print("")
+
+        #stop the entire program if cannot connect to mail server, this will stop functions from running with unnecessary data and possibly corrupting files
+        if error_count == 60:
+            exit()
+        error_count = 0
+
+        #loop will attempt to login to mailbox once a second or until it connects.
+        for i in range(30):
+            try:
+                mail.login("mike.adam.simon@gmail.com", "8R.wreyK_+t?AL9z")
+            except Exception:
+                time.sleep(10)
+                print("ERR", end = " ")
+                #counting errors for next block
+                error_count += 1
+                continue
+            break
+
+        # stop the entire program if cannot connect to mail server, this will stop functions from running with unnecessary data and possibly corrupting files
+        if error_count == 60:
+            exit()
+        error_count = 0
+
+        #getting emails from mailbox, try except for server errors. If occur, try again every 10 seconds for 5 minutes
+        for i in range(30):
+            try:
+                mail.list()
+                mail.select("inbox")
+            except Exception:
+                time.sleep(10)
+                print("ERR", end=" ")
+                # counting errors for next block
+                error_count += 1
+                continue
+            break
+
+        # stop the entire program if cannot connect to mail server, this will stop functions from running with unnecessary data and possibly corrupting files
+        if error_count == 60:
+            exit()
+        error_count = 0
+
+        #accounting for server errors, check every 10 seconds for 5 mins
+        for i in range(30):
+            try:
+                #mode will either be "all" or "unread"
+                result, data = mail.uid('search', None, mode)  # search and return uids
+            except Exception:
+                time.sleep(10)
+                print("ERR", end = " ")
+                # counting errors for next block
+                error_count += 1
+                continue
+            break
+
+        # stop the entire program if cannot connect to mail server, this will stop functions from running with unnecessary data and possibly corrupting files
+        if error_count == 60:
+            exit()
+        error_count = 0
+
+        #due to uid search, if no new emails found, will return empty byte array
+        if data != [b'']:
+
+            #get email ID
+            latest_email_uid = data[0].split()[-1]
+
+            #RFC822 is code for mail body
+            result, data = mail.uid('fetch', latest_email_uid, '(RFC822)')
+
+            raw_email = data[0][1]
+
+            #turns raw_email into a usable data type
+            email_message = email.message_from_bytes(raw_email)
+
+            #Check for attachments and save them to designated path
+            att_path = save_attachment(email_message)
+            if att_path == "No attachment found.":
+                att_return = ""
+            else:
+                att_return = "I've detected an attached file by the name of " + att_path.replace("../MessageAttachments/","") + ". I've saved this file and will hold onto it for you."
+
+            #display found attachment
+            print(att_path)
+
+            #build received array, this will later turn into reply_data
+            received.append(email.utils.parseaddr(email_message["From"])[1])
+            received.append(email.utils.parseaddr(email_message["From"])[0].split(" "))
+            received.append(str(email.header.decode_header(email_message['Subject'])[0])[2:-8])
+
+            #this is for after attachment is pulled off, also a redundant check is present just in case
+            if email_message.is_multipart():
+                for part in email_message.walk():
+                    ctype = part.get_content_type()
+                    cdispo = str(part.get('Content-Disposition'))
+
+                    # skip any text/plain (txt) attachments
+                    if ctype == 'text/plain' and 'attachment' not in cdispo:
+                        received.append(part.get_payload(decode=True))  # decode
+                        break
+            # not multipart - i.e. plain text, no attachments, keeping fingers crossed
+            else:
+                received.append(email_message.get_payload(decode=True))
+
+            return received, att_return
+
+        else:
+            return "no new", ""
+
+    except KeyboardInterrupt:
+        print("Keyboard Interrupt, program ending")
+        exit()
+
+
+#checks if console is active and returns True if it is
+def console_controller():
+    file = open("MIKEconsole/send_status.txt", "r")
+    data = file.read()
+    file.close()
+
+    if data == "1":
+        file = open("MIKEconsole/receive_status.txt", "w")
+        file.write("1")
+        file.close()
+        print("#### CONSOLE ACTIVE ####")
+
+        file = open("MIKEconsole/console_commands.txt","r")
+        data = file.read()
+        file.close()
+
+        if data != "":
+            response = logic(operation.Stage_One, data, json.loads('{"addr": "console", "name": "", "subject": "", "body": "", "new_key": "", "attach_key": "", "header": "", "sig": ""}'), 0, ["","","",""])
+            file = open("MIKEconsole/response.txt","w")
+            file.write(response)
+            file.close()
+    else:
+        print("Console not active.")
+
+
+#logic() is the heavy lifter of the message processing operations.
+#Takes built-in modules and parses the body of incoming emails to determine if additional operations need to be done, completes additional operations if required.
+#commands vast majority of functions.
+def logic(op, body, reply_data, active_user_index, last_message): #op = operation.enum
+
+    reply_body = ""
+
+    #operation.Keycheck: check for existing keys and returns the key if found, else ""
+    if op == operation.Key_Check:
+
+        #read in all key names from records
+        file = open("keys.txt","r")
+        data = file.readlines()
+        file.close()
+
+        #iter through keys list and return first matching
+        for i in range(len(data)):
+            if data[i].rstrip() in body:
+                return data[i]
+
+        return ""
+
+
+    #where first step modules are contained and single step modules
+    elif op == operation.Stage_One:
+
+        #convert to lower to avoid case-sensitive text
+        body = body.lower()
+
+        #unlike operation.Key_Check, key_match will return true if any text with key formatting is detected, not just existing keys.
+        key_match = re.compile(".*?[a-z]{2}[0-9]{7}")
+
+        #first block checks if it a habit email, only accepted from me with subject line "HabitUpdate"
+        if (last_message[0] == "conrad.selig@mines.sdsmt.edu" and last_message[2] == "HabitUpdate"):
+
+            #body of these messages will always be only habit name to mark, so no message parsing needed
+            mark_habit(last_message[3])
+
+            print("Habit Marked: " + last_message[3])
+
+            reply_body = "I've marked the following habit in your habit tracker: " + last_message[3]
+
+            return None
+
+        #todo: currently impossible to get timeslots without starting scheduling process.
+        #todo: starting the scheduling command without asking for timeslots errors out instead of providing timeslots when being used from console
+
+        #check to see if the user want to recieve open timeslots from my calendar
+        if any(x in body for x in ["time slot","timeslot","schedule"]):
+
+            print("'Schedule' or 'timeslot' Keyword Detected")
+
+            #dictates which days land on weekdays and weekends
+            json_week = json.loads('{"Weekdays": ["Monday","Tuesday","Wednesday","Thursday","Friday"], "Weekends": ["Saturday","Sunday"]}')
+
+            #working hours, sections are [Monday, Wednesday, Friday](MWF) ,[Tuesday, Thursday](TTH) ,[Saturday, Sunday](SSU)
+            json_working_hours = json.loads('{"MWF": [8,6], "TTH": [9,6], "SSU": [10,6]}')
+            timeslots = []
+            day_of_week = ""
+
+            #refresh or setup calendar events to insure to get accurate timeslots
+            events = setup_calendar_events()
+
+            #check for any numeral date format (english). Will accept invalid dates such as 14/01/18 as I will check for that later
+            usr_date = re.search("([0-9]?[0-9][-/.][0-9]?[0-9][-./][0-9]{2,4})", body.replace(" ",""))
+
+            #numeral date must not exist, try to find a spelled out date.
+            if usr_date == None:
+                print("Numberal date not found; trying to interpret linguistic date.")
+
+                #one loop for every month of the year
+                for i in range(12):
+                    next_test = ["january","febuary","march","april","may","june","july","august","september","october","november","december"][i]
+
+                    #check for if found in body without spaces, .lower() redundant but very fast and better safe than sorry
+                    if next_test in body.replace(" ","").lower():
+                        #if found, set day_of_week and format correctly
+                        day_of_week = str(i + 1).zfill(2)
+                        break
+
+                #could not find any date, return
+                else:
+                    reply_body += "I can see that your trying to schedule an event, but I can't tell what date your trying to inquire about!\n\nSorry!"
+                    return reply_body
+
+                #look for dates, I stille expect the user to use "1st" instead of "first", as actually spelled out numbers would
+                #not only be silly for the user to use, but would take forever to look for
+                day_search = re.search("([0-9]+)(st|nd|rd|th)", body.replace(" ",""))
+
+                #if I found a date
+                if day_search != None:
+
+                    #set day_of_week and format correctly
+                    day_of_week += "/" + day_search.group(1)
+
+                #could not find any date, return
+                else:
+                    reply_body += "I can see that your trying to schedule an event, but I can't tell what date your trying to inquire about!\n\nSorry!"
+                    return reply_body
+
+                #look for year, again formatted with numbers such as "2018" instead of "twenty eighteen"
+                year_search = re.search("([0-9]{4})", body.replace(" ",""))
+
+                #found a year
+                if year_search != None:
+                    #set day_of_week and format correctly
+                    day_of_week += "/" + year_search.group(1)
+
+                #could not find any year, default to this year
+                else:
+                    day_of_week += "/" + str(datetime.datetime.now().year)
+
+            #either found date accepted
+            if usr_date is not None or day_of_week != "":
+
+                #set usr_date to day_of_week if date was usr_date. .group(1) is entire date from usr_date
+                if usr_date is not None:
+                    day_of_week = usr_date.group(1)
+
+                print("Possible Date Found: " + day_of_week)
+
+                #sort down events into smaller list of events where each event is only from that date
+                days_events = get_day_events(events,day_of_week)
+
+                #remove date formatting
+                for i in ["-", "/", "."]:
+                    if i in day_of_week:
+
+                        #split into a easier to minipulate form
+                        day_of_week = day_of_week.split(i)
+
+                #resort date to match the formatting from the lbirarys I'm using
+                day_of_week[0], day_of_week[1], day_of_week[2] = day_of_week[2], day_of_week[0], day_of_week[1]
+
+                #make sure no single digits are present. ex: 1 -> 01
+                day_of_week[1] = day_of_week[1].zfill(2)
+                day_of_week[2] = day_of_week[2].zfill(2)
+
+                #this regex will return None if date is "18" instead of "2018"
+                year_check = re.search("([0-9]{2})[0-9]{2}", day_of_week[0])
+
+                #if above regex returned None, format to be valid
+                if year_check == None:
+                    #assuming that if century not specified, they mean this century. append first two numbers of year from current date
+                    day_of_week[0] = str(datetime.datetime.now().year)[:2] + day_of_week[0]
+
+                #check if the date is valid, building a datetime object with an invalid date will throw a ValueError, so easy way to check if the date is invalid
+                try:
+                    validity_check = datetime.datetime(int(day_of_week[0]),int(day_of_week[1]),int(day_of_week[2]))
+                except ValueError:
+
+                    #tell user that the date was invalid instead of stopping program
+                    reply_body += "I've found the date you specified, but it's invalid! Please use a valid date next time."
+                    return reply_body
+
+                #keep track of what date the user is using, usfull for multi-step operations
+                users_list[active_user_index].set_date("-".join(day_of_week))
+
+                #turn day_of_week elements into integers, extra formatting is removed but no longer required (ex: 01 -> 1)
+                for i in range(len(day_of_week)):
+                    day_of_week[i] = int(day_of_week[i])
+
+                #datetime object usfull for making comparasions with other datetime objects
+                day_of_week_datetime = datetime.datetime(int(day_of_week[0]),int(day_of_week[1]),int(day_of_week[2]))
+
+                #turn day_of_week from date into calendar day, any time a date is required from now on use usr_date or call from user object
+                day_of_week = calendar.day_name[calendar.weekday(day_of_week[0],day_of_week[1],day_of_week[2])]
+                print("Detected Day of Week: " + day_of_week)
+
+                #check for dates from the past
+                if str(day_of_week_datetime).split()[0] < str(datetime.datetime.now()).split()[0]:
+
+                    reply_body += "I'm sorry, but you cannot schedule an event in the past!"
+
+                #not in past
+                else:
+
+                    #get start and end times from all event objects, this will be reversed latter accounting with working hours to get timeslots
+                    start_end_times = [[]] #[[start,end],[start,end]]
+
+                    #look through every event and get start and end times
+                    for i in range(len(days_events)):
+
+                        #append start and end times
+                        start_end_times.append([days_events[i][1], days_events[i][2]])
+
+
+                        #todo: would be easier with datetime and time.delta()
+                        #I dont want timeslots that are less than an hour long
+                        #Check for end times at :50 or later and round up to next hour
+                        if int(start_end_times[-1][1][3:]) >= 50 and int(start_end_times[-1][1][3:]) != 0:
+                            #turn into number
+                            start_end_times[-1][1] = int(start_end_times[-1][1].replace(":",""))
+                            #round up last digits
+                            start_end_times[-1][1] = int(math.ceil(start_end_times[-1][1] / 100.0)) * 100
+                            #turn back to string and format
+                            start_end_times[-1][1] = str(start_end_times[-1][1]).zfill(4)
+                            #rebuild
+                            start_end_times[-1][1] = start_end_times[-1][1][:2] + ":" + start_end_times[-1][1][2:]
+
+                    #last element reserved, will become start of working hours and end of working hours
+                    start_end_times.append([])
+
+                    open_slots = []
+                    increments = []
+
+                    #time to actually build the timeslots, seperated into 2 blocks for weekdays and weekends, weekdays is them split into MWF and TTH
+                    for i in json_week["Weekdays"]:
+
+                        #check to see if day_of_week is a weekday
+                        if day_of_week == i:
+
+                            #check to see if MWF
+                            if any(x in day_of_week for x in ["Monday","Wednesday","Friday"]):
+
+                                #making last element working hours start and end
+                                start_end_times[0], start_end_times[-1] = ["",str(json_working_hours["MWF"][0]).zfill(2) + ":00"], [str(json_working_hours["MWF"][1] + 12).zfill(2) + ":00",""]
+
+                                #loop through every start and end time
+                                for b in range(len(start_end_times) - 1):
+
+                                    #does the end time of the next element not match the start time of the element one after?
+                                    if start_end_times[b][1] != start_end_times[b + 1][0]:
+
+                                        #if so append to open slots
+                                        open_slots.append([start_end_times[b][1], start_end_times[b+1][0]])
+
+                                #only runs if there are some valid slots
+                                if len(open_slots) != 0:
+
+                                    reply_body += "Here are Conrad's open time slots, please select which one(s) you would like, and let me know what your event is called.\n"
+                                    reply_body += "Example: 'slots 1,2,3,and 4 for an executive meeting.'\n\n"
+
+                                    #sort through every open_slots, this will build the formatting for the return
+                                    for b in range(len(open_slots)):
+
+                                        inc_temp = []
+
+                                        #turn start and end times from strings to ints
+                                        next_start = int(open_slots[b][0].replace(":",""))
+                                        next_end = int(open_slots[b][1].replace(":",""))
+
+                                        #this entire block checks for open slots more than an hour long and breaks them up into 1 hour segments
+                                        #constans 100 are because times are not ints instead of datetimes. (2:00 - 60 min = 1:00 and 200 - 100 = 100)
+                                        if next_start != next_end - 100:
+
+                                            #appending start time
+                                            inc_temp.append(next_start)
+
+                                            #this loop will add one hour increments to inc_temp until end time is met
+                                            for c in range(int((next_end - next_start) / 100)):
+                                                inc_temp.append(next_start + ((c + 1) * 100))
+
+                                            #add all broken slots into increments[]
+                                            for c in range(len(inc_temp) - 1):
+                                                increments.append([inc_temp[c],inc_temp[c+1]])
+                                        else:
+                                            #timeslot is not more than an hour, just add it
+                                            increments.append([next_start, next_end])
+
+                                    #time to add the increments into the reply_body
+                                    for b in range(len(increments)):
+
+                                        #formatting start and end times
+                                        increments[b][0], increments[b][1] = str(increments[b][0]).zfill(4), str(increments[b][1]).zfill(4)
+                                        increments[b][0], increments[b][1] = increments[b][0][:2] + ":" + increments[b][0][2:], increments[b][1][:2] + ":" + increments[b][1][2:]
+
+                                        reply_body += "Time slot " + str(b + 1) + ": " + increments[b][0] + " to " + increments[b][1] + ".\n"
+
+                                        #timeslots is recorded for multi-operation conversations
+                                        timeslots.append([str(b + 1), increments[b][0], increments[b][1]])
+
+                                else:
+                                    #no timeslots available on date
+                                    reply_body += "I'm sorry, Conrad does not have any open time slots for " + usr_date.group(1) + "."
+
+                            #not a MWF, check TTH
+                            else:
+
+                                # making last element working hours start and end
+                                start_end_times[0], start_end_times[-1] = ["", str(json_working_hours["TTH"][0]).zfill(2) + ":00"], [str(json_working_hours["TTH"][1] + 12).zfill(2) + ":00", ""]
+
+                                # loop through every start and end time
+                                for b in range(len(start_end_times) - 1):
+
+                                    # does the end time of the next element not match the start time of the element one after?
+                                    if start_end_times[b][1] != start_end_times[b + 1][0]:
+
+                                        # if so append to open slots
+                                        open_slots.append([start_end_times[b][1], start_end_times[b + 1][0]])
+
+
+                                # only runs if there are some valid slots
+                                if len(open_slots) != 0:
+
+                                    reply_body += "Here are Conrad's open time slots, please select which one(s) you would like, and let me know what your event is called.\n"
+                                    reply_body += "Example: 'slots 1,2,3,and 4 for an executive meeting.'\n\n"
+
+                                    # sort through every open_slots, this will build the formatting for the return
+                                    for b in range(len(open_slots)):
+
+                                        inc_temp = []
+
+                                        # turn start and end times from strings to ints
+                                        next_start = int(open_slots[b][0].replace(":",""))
+                                        next_end = int(open_slots[b][1].replace(":",""))
+
+                                        # this entire block checks for open slots more than an hour long and breaks them up into 1 hour segments
+                                        # constans 100 are because times are not ints instead of datetimes. (2:00 - 60 min = 1:00 and 200 - 100 = 100)
+                                        if next_start != next_end - 100:
+
+                                            # appending start time
+                                            inc_temp.append(next_start)
+
+                                            # this loop will add one hour increments to inc_temp until end time is met
+                                            for c in range(int((next_end - next_start) / 100)):
+                                                inc_temp.append(next_start + ((c + 1) * 100))
+
+                                            # add all broken slots into increments[]
+                                            for c in range(len(inc_temp) - 1):
+                                                increments.append([inc_temp[c],inc_temp[c+1]])
+                                        else:
+                                            # timeslot is not more than an hour, just add it
+                                            increments.append([next_start, next_end])
+
+                                    # time to add the increments into the reply_body
+                                    for b in range(len(increments)):
+
+                                        # formatting start and end times
+                                        increments[b][0], increments[b][1] = str(increments[b][0]).zfill(4), str(increments[b][1]).zfill(4)
+                                        increments[b][0], increments[b][1] = increments[b][0][:2] + ":" + increments[b][0][2:], increments[b][1][:2] + ":" + increments[b][1][2:]
+
+                                        reply_body += "Time slot " + str(b + 1) + ": " + increments[b][0] + " to " + increments[b][1] + ".\n"
+
+                                        # timeslots is recorded for multi-operation conversations
+                                        timeslots.append([str(b + 1), increments[b][0], increments[b][1]])
+
+                                else:
+                                    # no timeslots available on date
+                                    reply_body += "I'm sorry, Conrad does not have any open time slots for " + usr_date.group(1) + "."
+
+                            #Im removing a break here as I cant find any reason for it to be here, but should strange errors arise just put it back in (01/15/18)
+                            #break
+
+                    #not a weekday, must a weekend
+                    else:
+
+                        # making last element working hours start and end
+                        start_end_times[0], start_end_times[-1] = ["", str(json_working_hours["SSU"][0]).zfill(2) + ":00"], [str(json_working_hours["SSU"][1] + 12).zfill(2) + ":00", ""]
+
+                        # loop through every start and end time
+                        for i in range(len(start_end_times) - 1):
+
+                            # does the end time of the next element not match the start time of the element one after?
+                            if start_end_times[i][1] != start_end_times[i + 1][0]:
+
+                                # if so append to open slots
+                                open_slots.append([start_end_times[i][1], start_end_times[i + 1][0]])
+
+                        # only runs if there are some valid slots
+                        if len(open_slots) != 0:
+
+                            reply_body += "Here are Conrad's open time slots, please select which one(s) you would like, and let me know what your event is called.\n"
+                            reply_body += "Example: 'slots 1,2,3,and 4 for an executive meeting.'\n\n"
+
+                            # sort through every open_slots, this will build the formatting for the return
+                            for b in range(len(open_slots)):
+
+                                inc_temp = []
+
+                                # turn start and end times from strings to ints
+                                next_start = int(open_slots[b][0].replace(":", ""))
+                                next_end = int(open_slots[b][1].replace(":", ""))
+
+                                # this entire block checks for open slots more than an hour long and breaks them up into 1 hour segments
+                                # constans 100 are because times are not ints instead of datetimes. (2:00 - 60 min = 1:00 and 200 - 100 = 100)
+                                if next_start != next_end - 100:
+
+                                    # appending start time
+                                    inc_temp.append(next_start)
+
+                                    # this loop will add one hour increments to inc_temp until end time is met
+                                    for c in range(int((next_end - next_start) / 100)):
+                                        inc_temp.append(next_start + ((c + 1) * 100))
+
+                                    # add all broken slots into increments[]
+                                    for c in range(len(inc_temp) - 1):
+                                        increments.append([inc_temp[c], inc_temp[c + 1]])
+                                else:
+                                    # timeslot is not more than an hour, just add it
+                                    increments.append([next_start, next_end])
+
+                            # time to add the increments into the reply_body
+                            for b in range(len(increments)):
+
+                                # formatting start and end times
+                                increments[b][0], increments[b][1] = str(increments[b][0]).zfill(4), str(increments[b][1]).zfill(4)
+                                increments[b][0], increments[b][1] = increments[b][0][:2] + ":" + increments[b][0][2:], increments[b][1][:2] + ":" + increments[b][1][2:]
+
+                                reply_body += "Time slot " + str(b + 1) + ": " + increments[b][0] + " to " + increments[b][1] + ".\n"
+
+                                # timeslots is recorded for multi-operation conversations
+                                timeslots.append([str(b+1), increments[b][0], increments[b][1]])
+
+                        else:
+                            # no timeslots available on date
+                            reply_body += "I'm sorry, Conrad does not have any open time slots for " + usr_date.group(1) + "."
+
+                    #timeslots is stage 1 of a 2 stage operation, switch user to second stage
+                    users_list[active_user_index].change_stage(stages.Pick_Timeslot)
+                    #record timeslots with user object
+                    users_list[active_user_index].set_timeslots(timeslots)
+            else:
+                #could not even interpret a date, this is worst case senario for this operation
+                reply_body += "I can see that your trying to schedule an event, but I can't tell what date your trying to inquire about!\n\nSorry!"
+
+        #get all calendar events from a specified date, or just return all
+        if any(x in body for x in ["calendar","calender"]):
+
+            day_of_week = ""
+
+            print("'Calendar' Keyword Detected")
+
+            #build or refresh events to insure accuracy
+            events = setup_calendar_events()
+
+            #look for any text formatted as a date, check for if its a valid date is below
+            date = re.search("([0-9]?[0-9][-/.][0-9]?[0-9][-./][0-9]{2,4})", body.replace(" ",""))
+
+            #could not find a numeral date, try to find a text date
+            if date == None:
+                print("Numberal date not found; trying to interpret linguistic date.")
+
+                #one loop for every month of the year
+                for i in range(12):
+                    next_test = ["january","febuary","march","april","may","june","july","august","september","october","november","december"][i]
+
+                    #loop for a month name in the message body
+                    if next_test in body.replace(" ","").lower():
+
+                        #add to day_of_week
+                        day_of_week = str(i + 1).zfill(2)
+                        break
+                else:
+                    #could not find a date, return
+                    reply_body += "I can see that your trying to collect some calendar events, but I can't tell what date your trying to inquire about!\n\nSorry!"
+                    return reply_body
+
+                # look for dates, I still expect the user to use "1st" instead of "first", as actually spelled out numbers would
+                # not only be silly for the user to use, but would take forever to look for
+                day_search = re.search("([0-9]+)(st|nd|rd|th)", body.replace(" ",""))
+
+                #if day found
+                if day_search != None:
+
+                    #format and add to day_of_week
+                    day_of_week += "/" + day_search.group(1)
+
+                else:
+
+                    #could not find a date, return
+                    reply_body += "I can see that your trying to collect some calendar events, but I can't tell what date your trying to inquire about!\n\nSorry!"
+                    return reply_body
+
+                #look for a year
+                year_search = re.search("([0-9]{4})", body.replace(" ",""))
+
+                #if year found
+                if year_search is not None:
+                    #format and add to day_of_week
+                    day_of_week += "/" + year_search.group(1)
+                else:
+                    #otherwise default to this year
+                    day_of_week += "/" + str(datetime.datetime.now().year)
+
+            #if any date is found
+            if date != None or day_of_week != "":
+
+                #turn date into day_of_week
+                if date != None:
+                    day_of_week = date.group(1)
+
+                print("Possible Date Found: " + day_of_week)
+
+                #store the string version to return to later
+                str_day_of_week = day_of_week
+
+                #split date into list
+                for i in ["-", "/", "."]:
+                    if i in day_of_week:
+                        day_of_week = day_of_week.split(i)
+
+                #rearange date to argree with datetime library
+                day_of_week[0], day_of_week[1], day_of_week[2] = day_of_week[2], day_of_week[0], day_of_week[1]
+
+                # check if the date is valid, building a datetime object with an invalid date will throw a ValueError, so easy way to check if the date is invalid
+                try:
+                    validity_check = datetime.datetime(int(day_of_week[0]), int(day_of_week[1]), int(day_of_week[2]))
+                except ValueError:
+                    # tell user that the date was invalid instead of stopping program
+                    reply_body += "I've found the date you specified, but it's invalid! Please use a valid date next time."
+                    return reply_body
+
+                day_of_week = str_day_of_week
+
+                #narrow down to only calendar events from the specified date
+                days_events = get_day_events(events,day_of_week)
+
+                #check if no events on specified date
+                if days_events == None or days_events == "" or len(days_events) == 0:
+                    reply_body += "I did not find any events for " + day_of_week.replace(" ","") + ",\nSorry!"
+
+                #if any events on date
+                else:
+                    reply_body += "Here all of of the calender events for " + day_of_week.replace(" ","") + "\n"
+
+                    #sort through events and format
+                    for i in range(len(days_events)):
+                        days_events[i][0] = "-".join(days_events[i][0])
+                        days_events[i] = "  :  ".join(days_events[i])
+                    days_events = "\n".join(days_events)
+                    reply_body += days_events
+
+            #runs if no dates found, simply returns every calendar event I have
+            else:
+                events_str = ""
+
+                #sort through events and format
+                for i in range(len(events)):
+                    events[i][0] = "-".join(events[i][0])
+                    events[i] = "  :  ".join(events[i])
+                events_str = "\n".join(events)
+
+                reply_body += "I can see you want Conrad's calendar, but I didnt find a specific date. Here are all his events if you would like to look through them yourself.\n\n"
+                reply_body += events_str
+
+        #mathamatical simplifications
+        if "simplify" in  body:
+
+            #square root simplification
+            if any(command in body for command in ["sqrt", "square root", "square"]):
+
+                #search for the radical that needs to be simplified
+                num = re.search("([0-9]+)", body)
+
+                #if number is found
+                if num != None:
+
+                    #simplify using factorsplit script
+                    reply_body = factorsplit.main(int(num.group(1)))
+
+                    #check if value is already simplified
+                    if "√" + str(num.group(1)) == reply_body:
+                        return "Value cannot be simplified further."
+                    #else return original value and simplified value
+                    else:
+                        return "' √" + num.group(1) + " '  simplified is  ' " + reply_body + " '."
+
+                #could not find value to sqrt()
+                else:
+                    reply_body += "\nI'm sorry to report that I cannot find the number your trying to simplify.\n"
+
+            #look for fractions to simplify
+            fraction = re.search("([0-9]+)/([0-9]+)", body)
+            if fraction != None:
+                print(simplify(int(fraction.group(1)), int(fraction.group(2)), "str"))
+                if simplify(int(fraction.group(1)), int(fraction.group(2)), "str")[1] == 1:
+                    reply_body += "The simplified version of  " + fraction.group(1) + " / " + fraction.group(2) + "  is  " + simplify(int(fraction.group(1)), int(fraction.group(2)), "str")[0]
+                else:
+                    reply_body += "The simplified version of  " + fraction.group(1) + " / " + fraction.group(2) + "  is  " + " / ".join(simplify(int(fraction.group(1)), int(fraction.group(2)), "str")) + "  and the actual value is " + str(round(int(fraction.group(1))/int(fraction.group(2)),3))
+
+            #could not find the type of simplification the user wants
+            else:
+                reply_body += "I can see that you might be looking to simplify a number, but you were not specific enough for me to know what to do.\n"
+
+        #trig functions program, only console can run this
+        if "trig" in body and reply_data["addr"] == "console":
+            #run the trig functions program
+            trig_functions.main()
+
+            #wait a few seconds to make sure trig_functions program is done processing
+            time.sleep(2)
+
+            #read contents and return
+            file = open("../Third/trig_functions/results.txt", "r")
+            data = file.read()
+            file.close()
+
+            return data
+
+
+        #try except AttributeError is for todoist api
+        try:
+            #check for if an item needs to be added to to-do list
+            if "remind me to" in body:
+
+                #makes sure its from me, other addrs could be added if I so desired
+                if any(addr in reply_data["addr"] for addr in ["conrad.selig@mines.sdsmt.edu","console"]):
+
+                    #parse what the actual remind it
+                    match = re.search("remind me to (.+?)[.,?!]", body)
+                    #add the item to my to-do list
+                    add_todo(match.group(1))
+
+                    reply_body += "I've added '" + str(match.group(1)) + "' to your todo list.\n"
+                else:
+                    #returns if person adding item is not an allowed user
+                    reply_body += "I can see that you're trying to add items to Conrad's todo list, but I'm afraid you don't have the clearance level for that.\n"
+
+            #another way to add items to to-do list
+            if any(x in body for x in ["todo", "to do"]):
+                # makes sure its from me, other addrs could be added if I so desired
+                if any(addr in reply_data["addr"] for addr in ["conrad.selig@mines.sdsmt.edu","console"]):
+
+                    # parse what the actual remind it
+                    match = re.search("add \"?(.+?)\"? to my", body)
+                    # add the item to my to-do list
+                    add_todo(match.group(1))
+
+                    reply_body += "I've added '" + match.group(1) + "' to your todo list.\n"
+                else:
+                    # returns if person adding item is not an allowed user
+                    reply_body += "I can see that you're trying to add items to Conrad's todo list, but I'm afraid you don't have the clearance level for that.\n"
+
+        except AttributeError:
+            print("TODO ADDING ERROR")
+
+        #check for if a file was added, simply a coutesy message
+        if check_key(str(reply_data["attach_key"])):
+
+            #different message for if there is other text present
+            if reply_body == "":
+                reply_body += "I've attached the file you requested."
+            else:
+                reply_body += "I've also attached the file you requested."
+
+        #if a key format is found but not a matching key
+        if key_match.match(body) and not check_key(str(reply_data["attach_key"])):
+
+            reply_body += "hmmmm, I can tell you tried to attach a key (or something that looks like one), but I don't have that key on file!\nPlease double check to make sure you got your key correct."
+
+        #did processing find nothing? return command instructions
+        if reply_body == "":
+
+            print("No Keywords Detected")
+            reply_body = "I'm sorry to report that I'm not sure what your asking! Perhaps if you use one of the following keywords I will be more likely to understand what you want me to do.\n\n \
+            'Calendar'   -I'll send you all of Conrad's calendar events, looking for a specific one? Include a date and I'll narrow down your search.\n \
+            'Schedule'   -Schedule an event with Conrad Selig, please include a date. For example: 'Please schedule an event on " + str(datetime.datetime.now()).split()[0][5:] + "-" + str(datetime.datetime.now()).split()[0][:4] + "'\n \
+            'Features'   -Curious what all my functions are? Ask nicely and I might tell you! (not yet implemented)\n\n" + \
+            "Sorry for the inconvenience!"
+
+        return reply_body
+
+
+    #follow-up to schedule operation
+    elif op == operation.Schedule_Event:
+
+        reply_body = ""
+        selected_slots = []
+        event_name = ""
+        raw_event_name = ""
+
+        #timeslots were already built in operation.Stage_One, this just brings them back into play
+        timeslots = users_list[active_user_index].get_timeslots()
+
+        try:
+
+            #this loop looks through the entire message and finds numbers that indicate desired timeslots.
+            #loop continues looking through code until no possible timeslots are left (AttributeError)
+            while True:
+
+                #finding 1 possible timeslot
+                search = re.search(".*?( |-|,)([0-9][0-9]?)( |-|,)", body)
+
+                #append if timeslot found
+                if search is not None:
+                    selected_slots.append(int(search.group(2)))
+
+                #replace that timeslot with nothing so its not found again
+                body = body.replace(search.group(2), "")
+
+        #runs when no more possible timeslots found
+        except AttributeError:
+
+            #are there no timeslots?
+            if len(selected_slots) == 0:
+
+                #check if they are looking to exit operation.Schedule_Event
+                if any(x in body for x in ["cancel", "stop", "quit"]):
+
+                    #change back to first stage and return
+                    users_list[active_user_index].change_stage(stages.Initial)
+                    reply_body = "Your request to schedule an event has been cancelled. Access to all my functions has been restored."
+                    return reply_body
+
+                #no timeslots and they dont want to quit, they must not have been clear enough for the algorithm
+                reply_body += "I could not find your desired time slot(s) in your last message, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'\nIf you no longer wish to schedule an event, just let me know that you would like to cancel."
+                return reply_body
+
+        print("Selected Slots: " + str(selected_slots))
+
+        #sort slots low to high
+        selected_slots.sort()
+
+        #likely already strings, but just in case...
+        for i in range(len(selected_slots)):
+            selected_slots[i] = str(selected_slots[i])
+
+        #look for indicators that user intends to give an event name
+        search = re.search(".*? (an|a|for) (the )?(.*)", body)
+
+        #if found something
+        if search != None:
+
+            #set event_name
+            event_name = search.group(3)
+
+            #remove unwanted chars from event_name
+            for i in ["," , ".", "…" , ";" , "!" , "?" , "-" , "(" , ")" , "\n" , "\r" , '"' , "'", "’", '”', "“"]:
+                event_name = event_name.replace(i,"")
+
+            #raw_event_name = just event name
+            raw_event_name = event_name
+
+            #format for return
+            event_name = event_name.title()  + " - " + str(users_list[active_user_index].get_name()[0]) + " " + str(users_list[active_user_index].get_name()[1])
+
+        #no event name found
+        else:
+
+            #check if they want to quit operation.Schedule_Event
+            if any(x in body for x in ["cancel", "stop", "quit"]):
+
+                #set stage to initial and return
+                users_list[active_user_index].change_stage(stages.Initial)
+                reply_body = "Your request to schedule an event has been cancelled. Access to all my functions has been restored."
+                return reply_body
+
+            #they dont want to quit and no event name found
+            else:
+
+                #return instructions
+                reply_body += "I could not find a name for your event, please consider using the following format.\n'I would like time slots 5-7 (or 5,6,7) for a meeting.'\nIf you no longer wish to schedule an event, just let me know that you would like to cancel."
+
+            return reply_body
+
+        #setting timeslots
+        try:
+
+            #set timeslots, get start of first timeslot and end of last timeslot
+            start_time = timeslots[int(selected_slots[0]) - 1][1]
+            end_time = timeslots[int(selected_slots[-1]) - 1][2]
+
+        #throws if user gives an invalid timeslot
+        except IndexError:
+
+            #check if user wants to exit
+            if any(x in body for x in ["cancel", "stop", "quit"]):
+
+                #change stage to initial and return
+                users_list[active_user_index].change_stage(stages.Initial)
+                reply_body = "Your request to schedule an event has been cancelled. Access to all my functions has been restored."
+                return reply_body
+
+            #invalid timeslots and user does not want to quit
+            else:
+
+                #return instructions
+                reply_body += "It appears you specified an invalid time slot, please try again, and make sure to only use time slots that I have provided."
+
+            return reply_body
+
+        #point mark: all data has been accumulated
+
+        print("Setting up event...")
+        print("Event Name: " + event_name)
+        print("Start Time: " + start_time)
+        print("End Time: " + end_time)
+
+        #add the calendar event with required data
+        add_calendar_event(event_name, start_time, end_time, users_list[active_user_index].get_date())
+
+        #let the user know the operation was a success
+        reply_body += "I've added the event '" + raw_event_name + "' to Conrad's calendar, starting at " + start_time + " and ending at " + end_time + "."
+
+        #change stage back to initial
+        users_list[active_user_index].change_stage(stages.Initial)
+
+        #send me an email letting me know that an event was added to my calenda
+        sender(["conrad.selig@mines.sdsmt.edu", ["Conrad","Selig"], "Event Created: " + event_name,"I'm just letting you know that a new event was just added to your calendar.\n'" + event_name + "' from " + start_time + " to " + end_time + " on " + users_list[active_user_index].get_date() + ".\n\n","","","Dear Mr. Selig,\n\n", "Your Faithful Servent,\nMike"])
+
+        return reply_body
+
+
+#commands the entire program, making sure everything runs smoothly.
+def main():
+
+    #counts the number of epochs the program runs
+    test_count = 1
+
+    #the delay between checking for new emails. Recommended is 15
+    TIME = 15
+
+    #next two are where most data is saved during program operation
+    #todo: last_message really should be a JSON object
+    last_message = [] #addr 0, name 1, subject 2, body 3
+    reply_data = json.loads('{"addr": "", "name": "", "subject": "", "body": "", "new_key": "", "attach_key": "", "header": "", "sig": ""}')
+
+    #"cut lines", used to chop out any parts of incoming messages that happened in the past and should not be processed by Logic()
+    clines = []
+
+    #List of active users, required to be global so that if program exits save_usrs() can access it.
+    global users_list
+    users_list = []
+
+    #comes from receiver(), is empty only if no new messages are found
+    att_return = ""
+
+    #save_message turned to true if special conditions apply, see block below
+    save_message = False
+
+    #dictates when to check for new events (default is every 15 minutes)
+    event_refresh_time = datetime.datetime.now() + datetime.timedelta(minutes=15)
+
+    print("Setting up event objects...")
+    events_list = build_events([])
+
+    print("Retrieving last data... ")
+    #receiver mode here is "ALL", but really were just getting the last message sent. This is because of houw receiver() is setup
+    last_message, att_return = receiver("ALL")
+
+    #decode the message body
+    last_message[3] = bytes.decode(last_message[3], "utf-8")
+    print("Initial Data Received: " + str(last_message) + "\n")
+
+    #reading user data
+    print("Getting User Records...")
+    file = open("users.txt","r")
+    data = file.readlines()
+    file.close()
+    print("\t", len(data), "users found")
+    for i in range(len(data)):
+
+        #break apart file formatting
+        data[i] = data[i].split("#")
+        data[i][1] = data[i][1].split(",")
+        print("\t\t" + data[i][1][0] + " " + data[i][1][1])
+
+        #creating the user objects for easy manipulation
+        users_list.append(usrs(data[i][0],data[i][1],stages(int(data[i][2])),[x.split("-") for x in data[i][3].rstrip().split("+")],str(data[i][4]).replace("\n","")))
+
+    #surrounded by try except for keyboard interrupt, simply makes it so when user exits durring processing its a print statement instead of an error message
+    try:
+        while True:
+            print()
+
+            try:
+                # Timer
+                #first block builds the range ticks
+                for i in range(TIME):
+                    if i == 0 or i == TIME - 1:
+                        print(",", end="")
+                    else:
+                        print(" ", end="")
+                print()
+                #actually printing the progress bar
+                for i in range(TIME):
+                    print("#", end="")
+                    #forces the console to actually print the "#"s, otherwise it would wait untill the end of the loop and print all of them at once
+                    sys.stdout.flush()
+                    time.sleep(1)
+
+                    #next block gets all file names from the console directory, used later to check that console is not writing a command
+                    files = []
+                    for (dirpath, dirnames, filename) in os.walk("/Mike/Third/MIKEconsole/"):
+                        files.extend(filename)
+                        #break makes sure that only the one directory is read
+                        break
+
+                    #if console not writing
+                    if not any("writing" in file for file in files):
+
+                        #open commands file and read contents
+                        file = open("MIKEconsole/console_commands.txt")
+                        data = file.read()
+                        file.close()
+
+                        #check if a command is found
+                        if data != "":
+                            #stop timer if it has
+                            raise StopTimer
+
+                print("\n\n")
+
+                # end timer
+            except StopTimer:
+                print("\nTimer Skipped\n")
+
+            #check for console use
+            console_controller()
+
+            #do reminder check
+            print("Checking for Needed Reminders...")
+            #double check, first that its time for the reminder and second that the event has not already been reminded (technically redundant due to block below)
+            if datetime.datetime.now() > datetime.datetime.strptime(str(events_list[0].get_remind_time()), "%Y-%m-%d %H:%M:%S") and not events_list[0].get_reminded():
+                print("Sending Reminder...")
+                #.set_reminded() has no params as it always sets to True
+                events_list[0].set_reminded()
+                msg_body = "I'm sending this message to remind you about your next appointment.\n" + events_list[0].get_all() + "\n\n"
+
+                #build the message data
+                reply_data["addr"] = "conrad.selig@mines.sdsmt.edu"
+                reply_data["name"] = ["Conrad", "Selig"]
+                reply_data["subject"] = "Appointment Reminder - " + events_list[0].get_name()
+                reply_data["body"] = "I'm sending this message to remind you about your next appointment.\n" + events_list[0].get_all() + "\n\n"
+                reply_data["new_key"] = ""
+                reply_data["attach_key"] = ""
+                reply_data["header"] = "Dear Mr. Selig,\n\n"
+                reply_data["sig"] = "Your Faithful Servent,\nMike"
+                #send the message
+                sender(reply_data)
+                #reset reply_data to avoid overlap of information
+                reply_data = json.loads('{"addr": "", "name": "", "subject": "", "body": "", "new_key": "", "attach_key": "", "header": "", "sig": ""}')
+            else:
+                print("None")
+
+            #remove events that have been reminded
+            if events_list[0].get_reminded():
+                del events_list[0]
+
+            #check if its time to refresh the calendar objects
+            if datetime.datetime.now() > event_refresh_time:
+                #add 15 minutes to event_refresh_time
+                event_refresh_time = event_refresh_time + datetime.timedelta(minutes=15)
+                #re-build the events_list
+                events_list = build_events(events_list)
+
+            print("Checking for New Messages...")
+            #receiver mode set to "UNSEEN", so it 1: returns the last message recived, 2: returns "no new" if no new messages
+            new_message, att_return = receiver("UNSEEN")
+
+
+
+            #only happens if a new message is recieved
+            if new_message != "no new":
+
+                #decode the new message body
+                new_message[3] = bytes.decode(new_message[3], "utf-8")
+
+                #todo: reply removal could be a neural network right? That would almost certainly be better than this code
+                # Removing reply data
+                #gmail messages come with the entire conversation, including all reply messages. I need to avoid repeat commands so those reply messages need to be removed
+                #first block checks if its a reply message, second block removes reply message
+
+                #keeps track if this message is a reply at all
+                reply = False
+                #will be used to restore new_message[3] at the end of main()
+                old_body = new_message[3]
+                #splitting the body into processable lines
+                lines = new_message[3].split("\n")
+                #sorting through every line
+                for i in range(len(lines)):
+                    #check if its a reply by looking for '>' at the starts of lines
+                    if re.match(">.*", lines[i]):
+                        #set reply to true if such a case is found
+                        reply = True
+                    else:
+                        #otherwise append it as a non-reply line
+                        clines.append(lines[i])
+
+                #if it is a reply, additional processing needed
+                if reply:
+                    #used to remove two lines to avoid lines with nothing on them
+                    double_del = 0
+                    #look through every line already marked as non-reply
+                    for i in range(len(clines)):
+                        #next two blocks remove blank space at the end of message left over by the first block, double_del has no reset so usually only runs 1-3 times
+                        if double_del < 1 and clines[-1] != "\r":
+                            del clines[-1]
+                        elif double_del <= 1:
+                            del clines[-1]
+                            double_del += 1
+
+                #extra removal that the second block always fails to remove
+                if new_message[0] in clines[-1] or "mike.adam.simon@gmail.com" in clines[-1]:
+                    del clines[-2:]
+
+                #build back into new_message[3], as all reply data has been removed
+                new_message[3] = "\n".join(clines)
+                # end reply removing
+
+                #this is where I mark the current message as the "last message", could be done at end but seems to make more sense to be to be processing the "last message"
+                last_message = new_message
+
+                #print message body, this is so I can easily check if reply data was left over
+                print("Cut body: " + last_message[3])
+
+                #start building reply_data with non-changing data such as addr and name
+                reply_data["addr"] = last_message[0]
+                reply_data["name"] = last_message[1]
+                reply_data["subject"] = last_message[2]
+
+                print("--- New Message Recieved From", last_message[1][0], "---\n\n")
+
+                #check to make sure sender is already a registered user
+                for i in range(len(users_list)):
+                    if last_message[0] == users_list[i].get_addr():
+                        print("User Found")
+                        break
+                #otherwise make them an account with default settings
+                else:
+                    print("New User Detected: Creating Account")
+                    users_list.append(usrs(last_message[0],last_message[1], stages.Initial, [], ""))
+
+                #look at what index they have, active_user_index will be used later so the program always get the correct information
+                for i in range(len(users_list)):
+                    if users_list[i].get_addr() == reply_data["addr"]:
+                        print("Active user index: " + str(i))
+                        active_user_index = i
+
+                # If message longer than 80 chars (predetermined as a meaningfull message) - give key
+                if len(last_message[3]) >= 80:
+
+                    #add a new message key to reply_data
+                    reply_data["new_key"] = generate_key(last_message[1])
+                    reply_data["body"] += "I've saved your message and generated a unique key for you to access it with. If you would ever like to retrieve it, simply send this key back to me.\nYour Key: " + reply_data[-1] + "\n\n"
+
+                    #record the key so it can be sorted through later
+                    record_key(reply_data["new_key"])
+                    save_message = True
+                    print("Generating Key: ", reply_data["new_key"])
+
+                # see if their body has an existing key, and prepare the data to attach that file later
+                if logic(operation.Key_Check, last_message[3], reply_data, active_user_index, last_message) != "":
+
+                    reply_data["body"] = "I've attached the record requested in accordance to the key I recieved.\nIf you ever need that record again, that same key will still work to access it."
+
+                    #append file key name
+                    reply_data["attach_key"] = (
+                        logic(operation.Key_Check, last_message[3], reply_data, active_user_index, last_message))
+
+                if att_return != "":
+                    reply_data["body"] += att_return + "\n\n"
+
+                #if-elif block checks for what stage the active user is on, and processing calls logic() accordingly
+                #logic() returns the reply message body
+                if users_list[active_user_index].get_stage() == stages.Initial:
+
+                    #type error when returning None from logic() where you cant += NoneType. Easy solution is to just bypass the problem
+                    try:
+                        reply_data["body"] += logic(operation.Stage_One, last_message[3], reply_data, active_user_index, last_message)
+                    except TypeError:
+                        reply_data["body"] = None
+
+                elif users_list[active_user_index].get_stage() == stages.Pick_Timeslot:
+
+                    reply_data["body"] += logic(operation.Schedule_Event, last_message[3], reply_data, active_user_index, last_message)
+
+                #boolean from where we gave user new key. False if no new key given
+                if save_message:
+
+                    #record the message, done here so every single message does not get recorded, only important ones
+                    record_message(last_message, reply_data["new_key"])
+
+                    #save the message file, last_message[3] is out because of how save_message_file uses it.
+                    save_message_file(reply_data, last_message["body"])
+
+                #get the header and the signature
+                reply_data["header"] = get_header(last_message[1])
+                reply_data["sig"] = get_sig()
+
+                #check to make sure reply_data["body"] is not empty. Only would be empty if specified in logic() return as None (meaning operation needed no return message)
+                if reply_data["body"] is not None:
+                    print("All Data Accumulated... Preparing Reply: " + str(reply_data))
+
+                    #send the message!
+                    sender(reply_data)
+                else:
+                    print("No Reply Needed")
+
+                #reset last_message[3] to before we removed reply data, also reset other variables used in reply data processing
+                last_message[3] = old_body
+                old_body = ""
+                clines.clear()
+
+            #from way up above, runs if no new messages
+            else:
+
+                #printing some de-bug style info
+                print("--No New Messages--\t\t\t\t\t\t\t\t\t", test_count)
+                print("\tLast Message Was From: " + last_message[0])
+                print("Next Reminder Will Be At: " + events_list[0].get_remind_time()[:16] + "  (" + events_list[0].get_name() + ")")
+                print("Events will be refreshed at: " + str(event_refresh_time)[11:19])
+
+                #iterate how many tests have been run
+                test_count += 1
+
+            #basic resets
+            reply_data = json.loads('{"addr": "", "name": "", "subject": "", "body": "", "new_key": "", "attach_key": "", "header": "", "sig": ""}')
+            save_message = False
+
+
+    except KeyboardInterrupt:
+        print("\n\nKeyboard Interrupt")
+        exit()
+
+
+#atexit.register forces this function to run everytime the program ends, regardless of how it ends
+#save_usrs() saves user data for future use
+@atexit.register
+def save_usrs():
+    print("\n\nProgram Ending, Saving Users")
+    file = open("users.txt", "w")
+
+    #sorts through all users and formats data inside to be read back in later
+    for i in users_list:
+        #get timeslots for user
+        timeslots = i.get_timeslots()
+        #for each line in timeslots
+        if "\n" in timeslots:
+            #format (next 3)
+            timeslots = timeslots.remove("\n")
+        timeslots = ["-".join(x) for x in i.get_timeslots()]
+        timeslots = "+".join(timeslots)
+        #save timeslots
+        file.write(i.get_addr() + "#" + str(i.get_name()[0]) + "," + str(i.get_name()[1]) + "#" + str(i.get_stage().value) + "#" + timeslots + "#" + i.get_date() + "\n")
+    file.close()
+
+
+#keeps track of event objects, these objects are stored in a list which is why they are index through the rest of the program
+class event:
+    name = ""
+    start_time = ""
+    end_time = ""
+    date = ""
+    remind_time = ""
+    reminded = False
+
+    def __init__(self, in_name, in_start, in_end, in_date, in_remind):
+        self.name = in_name
+        self.start_time = in_start
+        self.end_time = in_end
+        self.date = in_date
+
+        #setting remding_time to standard formatting
+        self.remind_time = in_date + " " + in_remind + ":00"
+
+
+    #var returns
+    def get_all(self):
+        return self.name + " on " + self.date + " from " + self.start_time + " to " + self.end_time
+
+    def get_all_raw(self):
+        return [self.name, self.date, self.start_time, self.end_time]
+
+    def get_reminded(self):
+        return self.reminded
+
+    def set_reminded(self):
+        #print statement here so I can be assured that the boolean was switched
+        print("Event Reminder Boolean Switched")
+        self.reminded = True
+
+    def get_remind_time(self):
+        return self.remind_time
+
+    def get_end_time(self):
+        return self.end_time
+
+    def get_name(self):
+        return self.name
+
+
+#used for user data, set to integers for file saving
+class stages(Enum):
+    Initial = 0
+    Pick_Timeslot = 1
+
+
+#used for keeping track of what stage is being used in the logic() function
+class operation(Enum):
+    Key_Check = 0
+    Stage_One = 1
+    Schedule_Event = 2
+    Console = 3
+
+
+#defining exception used to stop timer
+class StopTimer(Exception):
+    pass
+
+
+#user object, built from users.txt in main()
+#build into list, which is why they are indexed throughout program
+class usrs:
+    name = []
+    addr = ""
+    stage = stages
+    timeslots = []
+    date = "" #year-month-day  ex: 2017-12-07
+
+    def __init__(self,in_addr,in_name,in_stage,in_timeslots, in_date):
+        self.stage = stages.Initial
+        self.name = in_name
+        self.addr = in_addr
+        self.stage = in_stage
+        self.timeslots = in_timeslots
+        self.date = in_date
+
+    #var returns
+    def get_name(self):
+        return self.name
+
+    def get_addr(self):
+        return self.addr
+
+    def get_stage(self):
+        return self.stage
+
+    def change_stage(self,new_stage):
+        self.stage = new_stage
+
+    def set_timeslots(self, in_slots):
+        self.timeslots = in_slots
+
+    def get_timeslots(self):
+        return self.timeslots
+
+    def set_date(self, in_date):
+        self.date = in_date
+
+    def get_date(self):
+        return self.date
+
+
+#forces main() to run at program start
+if __name__ == "__main__":
+    main()
+
+
+#error with timeslots when using console because no active_user_index is set
